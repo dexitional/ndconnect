@@ -1,0 +1,9 @@
+node_modules
+.output
+.cache
+.nitro
+.vite
+files
+AGENT.md
+package-lock.json
+apps/web/src/routeTree.gen.ts

@@ -1,0 +1,36 @@
+{
+  "name": "@ndc/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --configLoader runner --port 3100 --host 127.0.0.1 --strictPort",
+    "build": "vite build --configLoader runner",
+    "start": "node --env-file=../../.env .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@ndc/db": "*",
+    "@ndc/ui": "*",
+    "@tanstack/react-start": "1.169.5",
+    "@tanstack/react-router": "1.170.46",
+    "@tanstack/react-query": "5.107.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "hono": "4.13.17",
+    "zod": "4.6.7",
+    "bcryptjs": "3.0.3",
+    "google-auth-library": "11.3.4",
+    "papaparse": "5.7.0",
+    "lucide-react": "1.71.0",
+    "framer-motion": "14.12.0",
+    "sonner": "2.0.8",
+    "qs": "6.17.1"
+  },
+  "devDependencies": {
+    "@types/qs": "6.15.1",
+    "vite": "8.3.7",
+    "@vitejs/plugin-react": "6.3.0",
+    "nitro": "3.0.260903-beta",
+    "@tailwindcss/vite": "4.3.5",
+    "tailwindcss": "4.3.5"
+  }
+}

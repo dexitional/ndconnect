@@ -1,0 +1,18 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+backups/
+.output/
+dist/
+.nitro/
+.tanstack/
+.DS_Store
+coverage/
+# Original brief contains a provider credential.
+AGENT.md
+.vite/
+test-results/
+playwright-report/
+.cache/

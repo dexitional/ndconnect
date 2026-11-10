@@ -1,0 +1,237 @@
+import { test, expect } from "@playwright/test";
+test("member signs in, imports contacts, sends SMS and voice, and uses shared leads", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/login");
+  await expect(
+    page.getByRole("heading", { name: "Good to see you again." }),
+  ).toBeVisible();
+  await page.getByLabel("Phone number").fill("0245559002");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Welcome back, Ama." }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/member-overview.png",
+    fullPage: true,
+    caret: "initial",
+  });
+  await page.getByRole("link", { name: "My contacts", exact: true }).click();
+  await page.getByRole("button", { name: "New contact list" }).click();
+  await page.getByLabel("List name").fill("Neighborhood team");
+  await page.getByLabel("Description").fill("Imported browser test audience.");
+  await page
+    .getByRole("button", { name: "Create contact list", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Neighborhood team" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Manage contacts" }).click();
+  await page.getByLabel("Contact CSV").setInputFiles({
+    name: "contacts.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "name,phone\nAma,0245559101\nKojo,0245559102\nDuplicate,+233245559101\nInvalid,nope",
+    ),
+  });
+  await page.getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Import contacts", exact: true })
+    .click();
+  await expect(
+    page.getByText("2 imported · 1 duplicates skipped · 1 invalid"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Add contact", exact: true }).click();
+  await page.getByLabel("Contact name", { exact: true }).fill("Esi Addo");
+  await page.getByLabel("Contact phone number").fill("0245559103");
+  await page.getByRole("dialog").getByRole("checkbox").check();
+  await page.screenshot({
+    path: "test-results/add-contact.png",
+    fullPage: true,
+    caret: "initial",
+  });
+  await page.getByRole("button", { name: "Save contact", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Contacts (3)", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Esi Addo", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Ama", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Contact phone number").fill("+233245559103");
+  await page.getByRole("dialog").getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Save contact", exact: true }).click();
+  await expect(
+    page.getByText("This phone number is already in this list."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Upload CSV", exact: true }).click();
+  await page.getByLabel("Contact CSV").setInputFiles({
+    name: "additional.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("name,phone\nDuplicate,0245559103\nYaw,0245559104"),
+  });
+  await page.getByRole("dialog").getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Import contacts", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Contacts (4)", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Esi Addo", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.goto("/compose");
+  await page.getByLabel("Campaign name").fill("Neighborhood invitation");
+  await page.getByText("Neighborhood team", { exact: true }).click();
+  await page
+    .getByLabel("Your message")
+    .fill("Hello neighbors! Join us for our community meeting this Saturday.");
+  await page.getByRole("button", { name: "Review campaign" }).click();
+  await page.getByRole("dialog").getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Confirm and send" }).click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("heading", { name: "Neighborhood invitation" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("completed", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(
+    page.getByRole("dialog").getByText("accepted", { exact: true }).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.getByRole("link", { name: "Shared leads", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Community volunteers" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Use this audience" }).click();
+  await expect(
+    page.getByRole("checkbox").filter({ visible: true }).first(),
+  ).toBeVisible();
+  await page.getByLabel("Campaign name").fill("Voice invitation");
+  await page
+    .getByRole("button", { name: "Voice message Let them hear it from you." })
+    .click();
+  await page.getByLabel("Voice recording").setInputFiles({
+    name: "greeting.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("RIFF0000WAVEfmt "),
+  });
+  await expect(page.getByText("Recording uploaded.")).toBeVisible();
+  await page.getByRole("button", { name: "Review campaign" }).click();
+  await page.getByRole("dialog").getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Confirm and send" }).click();
+  await expect(
+    page.getByRole("dialog").getByText("completed", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  expect(errors).toEqual([]);
+});
+test("admin reviews leads, allocates allowance, sees gateway health and audits", async ({
+  page,
+}) => {
+  await page.goto("/admin/login");
+  await expect(
+    page.getByRole("heading", { name: "Welcome back, admin." }),
+  ).toBeVisible();
+  await expect(page.locator(".auth-form")).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: "test-results/admin-login.png",
+    fullPage: true,
+    caret: "initial",
+  });
+  await page.getByLabel("Phone number").fill("0245559001");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "A clear view of every connection." }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "People & access", exact: true })
+    .click();
+  const row = page.getByRole("row").filter({ hasText: "Ama Mensah" });
+  await row.getByRole("button", { name: "Allocate" }).click();
+  await page.getByLabel("Units to add").fill("250");
+  await page.getByRole("button", { name: "Allocate 250 units" }).click();
+  await expect(page.getByText("Account updated.")).toBeVisible();
+  await page.getByRole("link", { name: "Lead moderation" }).click();
+  await page.getByRole("button", { name: "Approved", exact: true }).click();
+  await expect(page.getByText("Community volunteers")).toBeVisible();
+  await page
+    .getByRole("link", { name: "Gateway settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Arkesel messaging" }),
+  ).toBeVisible();
+  await expect(page.getByText("Local mock")).toBeVisible();
+  await page.getByLabel("Messaging provider").selectOption("mnotify");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(
+    page.getByRole("heading", { name: "mNotify messaging" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Messaging provider")).toHaveValue("mnotify");
+  await expect(page.locator(".content")).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: "test-results/mnotify-gateway.png",
+    fullPage: true,
+  });
+  await page.getByLabel("Messaging provider").selectOption("arkesel");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Arkesel messaging" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Activity log" }).click();
+  await expect(
+    page.getByText("gateway.provider_changed").first(),
+  ).toBeVisible();
+  await expect(page.getByText("user.updated").first()).toBeVisible();
+});
+test("mobile layout fits and navigation opens; signup verifies a phone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/signup");
+  await page.getByLabel("Full name").fill("Mobile Member");
+  await page.getByLabel("Phone number").fill("0245559201");
+  await page.getByRole("button", { name: "Send verification code" }).click();
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Mobile-test-password");
+  await page.getByLabel("Verification code").fill("123456");
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Welcome back, Mobile." }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await expect(
+    page.getByRole("link", { name: "My contacts", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "My contacts", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "My contacts", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".content")).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: "test-results/mobile-contacts.png",
+    fullPage: true,
+    caret: "initial",
+  });
+});

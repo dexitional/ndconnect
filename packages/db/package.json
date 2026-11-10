@@ -1,0 +1,10 @@
+{
+  "name": "@ndc/db",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "dotenv": "18.0.10"
+  }
+}
