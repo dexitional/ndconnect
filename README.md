@@ -47,6 +47,8 @@ npm run admin:create
 
 Sign in at `/admin/login`. The command creates a verified administrator with 100,000 platform send units and refuses to overwrite an existing account. The operator must control the supplied phone number. New member accounts start with **zero** units; allocate units under **People & access**. One SMS part or one voice recipient consumes one unit. These units are an administrative sending limit, not a prepaid monetary wallet or a provider account balance.
 
+Run this command **on the production server**, with the same `DATABASE_PATH` and environment as the web service. Git does not contain your local database or administrator credentials. A fresh deployment therefore needs its own administrator setup; setting `ADMIN_PHONE` and `ADMIN_PASSWORD` alone does not create an account. If the account already exists, use phone-verified password reset or inspect the existing account before changing it.
+
 ### Provider selection and mNotify configuration
 
 Administrators can choose **Arkesel** or **mNotify** in **Gateway settings → Messaging provider → Save provider**. The selection is stored in SQLite, survives restarts, and is audited. Arkesel remains the initial provider. Only configured providers can be selected outside local mock mode. Keys are never sent to the browser.
@@ -134,6 +136,12 @@ NODE_ENV=production npm run worker
 ```
 
 `ecosystem.config.cjs` provides an optional PM2 configuration for the two processes. Set `APP_URL` to your HTTPS domain and supply secrets through `.env` or the process environment. Terminate HTTPS at a reverse proxy; pass requests to the Node server and allow request bodies up to 12 MB. Secure session cookies require HTTPS in production. `TRUST_PROXY=true` is appropriate only when your proxy replaces the client’s `X-Forwarded-For` header. Otherwise authentication uses a shared conservative rate-limit bucket.
+
+`npm start` loads the root `.env` when present, keeps externally supplied environment values, and starts from the repository root so database/upload paths stay consistent. Set `PORT` to the port used by your reverse proxy. If unset, an explicit port in `APP_URL` is used for a local preview; otherwise the Node server keeps its default port 3000. The PM2 configuration explicitly uses port 3100. `APP_URL` must match the browser-facing HTTPS origin, not the internal Node address.
+
+Deploy the entire `apps/web/.output/` directory, including `public/`. Branding is explicitly bundled from `apps/web/public/` even though Nitro uses an isolated cache directory. `/brand/logo.png` and `/brand/wordmark.png` must return `Content-Type: image/png`; an HTML response with status 200 means the request reached the application's catch-all route rather than an image.
+
+For production login failures, a `401` response means the credentials/account in the production database were rejected; `403` with an origin error means `APP_URL` does not match the browser origin. A successful login followed by a return to the login page requires checking HTTPS and the session cookie. The production check below now exercises a real browser login, reloads the authenticated page, and verifies decoded images as well as PNG bytes.
 
 Build and run on the same OS/architecture, or rebuild on your target server: `better-sqlite3` contains a native binary. Keep the repository runtime files and production dependencies available to the worker. SQLite and uploaded recordings require a persistent, locally attached disk. Do not put the database on NFS or run independent replicas with separate database files.
 

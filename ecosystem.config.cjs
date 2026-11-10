@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "ndc-web",
       cwd: __dirname,
-      script: "apps/web/.output/server/index.mjs",
+      script: "scripts/start.mjs",
       instances: 1,
       exec_mode: "fork",
       env: { NODE_ENV: "production", PORT: "3100" },

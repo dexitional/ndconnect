@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { hash } from "bcryptjs";
+import { chromium } from "@playwright/test";
 const temp = await mkdtemp(resolve(tmpdir(), "ndcms-production-"));
 process.env.DATABASE_PATH = resolve(temp, "test.sqlite");
 process.env.UPLOAD_DIR = resolve(temp, "uploads");
@@ -21,12 +22,17 @@ run(
   await hash("Smoke-test-password", 12),
 );
 db.close();
-const child = spawn(process.execPath, ["apps/web/.output/server/index.mjs"], {
-  cwd: process.cwd(),
-  env: { ...process.env, PORT: "3112", HOST: "127.0.0.1" },
+const childEnv: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
+delete childEnv.PORT;
+delete childEnv.NITRO_PORT;
+// Use the same entry and working directory as npm start; derive port from APP_URL.
+const child = spawn(process.execPath, ["../../scripts/start.mjs"], {
+  cwd: resolve("apps/web"),
+  env: childEnv,
   stdio: ["ignore", "pipe", "pipe"],
 });
 let logs = "";
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 child.stdout.on("data", (d) => {
   logs += d;
 });
@@ -49,9 +55,24 @@ try {
     await new Promise((r) => setTimeout(r, 100));
   }
   assert.ok(ready, "Production server did not become healthy: " + logs);
-  for (const path of ["/login", "/admin/login", "/brand/logo.png"]) {
+  for (const path of ["/login", "/admin/login"]) {
     const response: Response = await fetch(process.env.APP_URL + path);
     assert.equal(response.status, 200, path);
+  }
+  for (const path of ["/brand/logo.png", "/brand/wordmark.png"]) {
+    const response: Response = await fetch(process.env.APP_URL + path);
+    assert.equal(response.status, 200, path);
+    assert.match(
+      response.headers.get("content-type") || "",
+      /^image\/png/,
+      `${path} must be an image, not a catch-all HTML response`,
+    );
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(
+      bytes.subarray(0, 8).toString("hex"),
+      "89504e470d0a1a0a",
+      path,
+    );
   }
   const html = await (await fetch(process.env.APP_URL + "/login")).text();
   const asset = html.match(/\/assets\/[^"\s]+\.css/)?.[0];
@@ -99,10 +120,46 @@ try {
   const configuration = await gateway.text();
   assert.equal(JSON.parse(configuration).provider, "mnotify");
   assert.equal(configuration.includes(process.env.MNOTIFY_API_KEY), false);
+  browser = await chromium.launch({
+    executablePath:
+      process.env.CHROME_PATH ||
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto(process.env.APP_URL + "/admin/login");
+  await page.getByLabel("Phone number").fill("0245559999");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Smoke-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/admin");
+  await page.getByRole("link", { name: "People & access" }).waitFor();
+  await page.reload();
+  await page.getByRole("link", { name: "People & access" }).waitFor();
+  const sessionCookies = await context.cookies();
+  assert.ok(
+    sessionCookies.some(
+      (c) => c.name === "ndc_session" && c.httpOnly && c.secure,
+    ),
+  );
+  await page
+    .locator('img[src="/brand/logo.png"]')
+    .evaluate(async (img: HTMLImageElement) => {
+      await img.decode();
+    });
+  assert.deepEqual(
+    pageErrors,
+    [],
+    "Production browser must hydrate without errors",
+  );
   console.log(
-    "Production smoke checks passed: SSR pages, assets, SQLite, authentication, secure cookies, authorization, dashboard, and provider switching. No provider requests sent.",
+    "Production checks passed: PNG bytes and rendering, browser login and persistent secure session, SSR, assets, SQLite, authorization, dashboard, and provider switching. No provider requests sent.",
   );
 } finally {
+  await browser?.close();
   child.kill("SIGTERM");
   await new Promise((r) =>
     child.exitCode !== null ? r(null) : child.once("exit", r),

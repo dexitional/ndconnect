@@ -17,6 +17,9 @@ export default defineConfig({
       preset: "node-server",
       rootDir: cache,
       buildDir: resolve(cache, "nitro"),
+      // rootDir is an isolated cache, so Nitro cannot discover the app's public/
+      // directory automatically. Bundle the actual public files explicitly.
+      publicAssets: [{ dir: resolve("public"), baseURL: "/" }],
       output: {
         dir: resolve(".output"),
         serverDir: resolve(".output/server"),

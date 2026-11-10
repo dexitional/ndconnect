@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --configLoader runner --port 3100 --host 127.0.0.1 --strictPort",
     "build": "vite build --configLoader runner",
-    "start": "node --env-file=../../.env .output/server/index.mjs"
+    "start": "node ../../scripts/start.mjs"
   },
   "dependencies": {
     "@ndc/db": "*",
