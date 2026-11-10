@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { Toaster } from "sonner";
 import css from "../styles.css?url";
+import { logoUrl } from "../lib/brand";
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -22,7 +23,7 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: css },
-      { rel: "icon", href: "/brand/logo.png" },
+      { rel: "icon", href: logoUrl },
     ],
   }),
   component: Root,

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { hash } from "bcryptjs";
 import { chromium } from "@playwright/test";
+import { logoUrl } from "../apps/web/src/lib/brand";
 const temp = await mkdtemp(resolve(tmpdir(), "ndcms-production-"));
 process.env.DATABASE_PATH = resolve(temp, "test.sqlite");
 process.env.UPLOAD_DIR = resolve(temp, "uploads");
@@ -59,7 +60,7 @@ try {
     const response: Response = await fetch(process.env.APP_URL + path);
     assert.equal(response.status, 200, path);
   }
-  for (const path of ["/brand/logo.png", "/brand/wordmark.png"]) {
+  for (const path of [logoUrl, "/brand/logo.png", "/brand/wordmark.png"]) {
     const response: Response = await fetch(process.env.APP_URL + path);
     assert.equal(response.status, 200, path);
     assert.match(
@@ -146,7 +147,7 @@ try {
     ),
   );
   await page
-    .locator('img[src="/brand/logo.png"]')
+    .locator(`img[src="${logoUrl}"]`)
     .evaluate(async (img: HTMLImageElement) => {
       await img.decode();
     });

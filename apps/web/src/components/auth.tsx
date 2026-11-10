@@ -13,6 +13,7 @@ import {
 import { motion } from "framer-motion";
 import { Button, Input, Field } from "@ndc/ui";
 import { api, post } from "../lib/api";
+import { logoUrl } from "../lib/brand";
 export function Auth({ mode = "login" }: { mode?: string }) {
   const admin = mode === "admin/login",
     signup = mode === "signup",
@@ -70,7 +71,7 @@ export function Auth({ mode = "login" }: { mode?: string }) {
   return (
     <main className="auth-page">
       <a href="/login" className="auth-brand">
-        <img src="/brand/logo.png" alt="NDC" />
+        <img src={logoUrl} alt="NDC" />
         <span>
           connect<span className="brand-dot">.</span>
         </span>
@@ -280,7 +281,7 @@ export function Auth({ mode = "login" }: { mode?: string }) {
             <div className="orbit two" />
             <div className="orbit three" />
             <div className="orbit-logo">
-              <img src="/brand/logo.png" alt="NDC umbrella" />
+              <img src={logoUrl} alt="NDC umbrella" />
             </div>
             <span className="floating-message">
               <MessageSquare size={20} />

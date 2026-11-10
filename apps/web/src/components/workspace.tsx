@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { logoUrl } from "../lib/brand";
 import {
   LayoutDashboard,
   Send,
@@ -205,7 +206,7 @@ export function Workspace({ page = "" }: { page?: string }) {
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
         <a className="brand" href={admin ? "/admin" : "/"}>
-          <img src="/brand/logo.png" alt="NDC" />
+          <img src={logoUrl} alt="NDC" />
           <span>
             connect<span className="brand-dot">.</span>
             <small>COMMUNICATIONS HUB</small>
