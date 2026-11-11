@@ -1,6 +1,6 @@
 import { db, one, all, run, audit, type Row } from "@ndc/db";
 import { replayReceipts } from "./webhooks";
-import { smsParts } from "../lib/shared";
+import { refundRecipients } from "./credits";
 import {
   sendBatch,
   ProviderError,
@@ -93,19 +93,11 @@ export async function processOne(
             throw new ProviderError(
               "Sending stopped because account or list access changed.",
             );
-          const excluded = run(
-            "UPDATE deliveries SET status='cancelled',error='Recipient opted out before dispatch.' WHERE campaign_id=? AND status='pending' AND phone IN (SELECT phone FROM suppressions)",
+          const excluded = all(
+            "UPDATE deliveries SET status='cancelled',error='Recipient opted out before dispatch.' WHERE campaign_id=? AND status='pending' AND phone IN (SELECT phone FROM suppressions) RETURNING credit_source",
             campaign.id,
-          ).changes;
-          if (excluded)
-            run(
-              "UPDATE users SET allowance=allowance+? WHERE id=?",
-              excluded *
-                (campaign.channel === "sms"
-                  ? smsParts(campaign.message).parts
-                  : 1),
-              campaign.owner_id,
-            );
+          );
+          refundRecipients(campaign, excluded);
           const rows = all(
             "SELECT * FROM deliveries WHERE campaign_id=? AND status='pending' LIMIT 100",
             campaign.id,

@@ -29,12 +29,14 @@ import {
   HelpCircle,
   Globe,
   ChevronDown,
+  CreditCard,
 } from "lucide-react";
 import { Button, Badge } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
 import { number } from "../lib/shared";
 import { Contacts, LeadLibrary } from "./contacts";
 import { Campaigns, Composer } from "./campaigns";
+import { VoiceCredits, AdminPayments, NotificationBell } from "./billing";
 import {
   AdminUsers,
   AdminLists,
@@ -147,6 +149,7 @@ const navUser = [
   { href: "/campaigns", label: "Campaigns", icon: Send },
   { href: "/contacts", label: "My contacts", icon: Users },
   { href: "/leads", label: "Shared leads", icon: Library },
+  { href: "/credits", label: "Voice credits", icon: CreditCard },
 ];
 const navAdmin = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -156,6 +159,7 @@ const navAdmin = [
   { href: "/admin/suppressions", label: "Opt-out register", icon: Ban },
   { href: "/admin/audit", label: "Activity log", icon: Activity },
   { href: "/admin/gateway", label: "Gateway settings", icon: Settings },
+  { href: "/admin/payments", label: "Payments & credits", icon: CreditCard },
 ];
 export function Workspace({ page = "" }: { page?: string }) {
   const [mobile, setMobile] = useState(false);
@@ -193,6 +197,7 @@ export function Workspace({ page = "" }: { page?: string }) {
     "contacts",
     "leads",
     "compose",
+    "credits",
     "settings",
     "admin",
     "admin/campaigns",
@@ -201,6 +206,7 @@ export function Workspace({ page = "" }: { page?: string }) {
     "admin/suppressions",
     "admin/audit",
     "admin/gateway",
+    "admin/payments",
   ];
   return (
     <div className="app-shell">
@@ -327,6 +333,7 @@ export function Workspace({ page = "" }: { page?: string }) {
               <kbd>↵</kbd>
             </form>
             <span className="top-divider" />
+            <NotificationBell />
             <a
               className="help-link"
               href="/settings"
@@ -367,6 +374,10 @@ export function Workspace({ page = "" }: { page?: string }) {
             <Campaigns admin={admin} />
           ) : page === "settings" ? (
             <Profile user={user} />
+          ) : page === "credits" ? (
+            <VoiceCredits user={user} />
+          ) : page === "admin/payments" ? (
+            <AdminPayments />
           ) : page === "admin/users" ? (
             <AdminUsers />
           ) : page === "admin/leads" ? (

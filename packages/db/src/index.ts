@@ -111,6 +111,45 @@ if (!db.prepare("SELECT 1 FROM migrations WHERE version=4").get()) {
     `);
   }).immediate();
 }
+if (!db.prepare("SELECT 1 FROM migrations WHERE version=5").get()) {
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM migrations WHERE version=5").get()) return;
+    db.exec(`
+      ALTER TABLE users ADD COLUMN voice_credits INTEGER NOT NULL DEFAULT 0 CHECK(voice_credits>=0);
+      ALTER TABLE deliveries ADD COLUMN credit_source TEXT NOT NULL DEFAULT 'allowance' CHECK(credit_source IN ('allowance','voice'));
+      INSERT INTO settings(key,value) VALUES
+        ('voice_rate_pesewas','40'),
+        ('payment_phone','0558641826'),
+        ('payment_name','Ebenezer Kwabena Blay Ackah'),
+        ('payment_network','Mobile Money');
+      CREATE TABLE payment_requests (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+        credits INTEGER NOT NULL CHECK(credits>0), rate_pesewas INTEGER NOT NULL CHECK(rate_pesewas>0),
+        total_pesewas INTEGER NOT NULL CHECK(total_pesewas=credits*rate_pesewas),
+        payment_phone TEXT NOT NULL, payment_name TEXT NOT NULL, payment_network TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'awaiting_payment' CHECK(status IN ('awaiting_payment','pending','approved','rejected')),
+        transaction_id TEXT COLLATE NOCASE UNIQUE, payer_name TEXT, payer_phone TEXT, payer_network TEXT,
+        paid_pesewas INTEGER, paid_at TEXT, note TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1, reviewer_id TEXT REFERENCES users(id), review_note TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reviewed_at TEXT
+      );
+      CREATE INDEX payments_user ON payment_requests(user_id,created_at);
+      CREATE INDEX payments_status ON payment_requests(status,updated_at);
+      CREATE TABLE voice_credit_purchases (
+        id TEXT PRIMARY KEY, payment_id TEXT NOT NULL UNIQUE REFERENCES payment_requests(id),
+        user_id TEXT NOT NULL REFERENCES users(id), credits INTEGER NOT NULL CHECK(credits>0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE notifications (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL, message TEXT NOT NULL, href TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, read_at TEXT
+      );
+      CREATE INDEX notifications_user ON notifications(user_id,read_at,created_at);
+      INSERT INTO migrations(version) VALUES(5);
+    `);
+  }).immediate();
+}
 export type Row = Record<string, any>;
 export function one(sql: string, ...params: any[]): Row | undefined {
   return db.prepare(sql).get(...params) as Row | undefined;

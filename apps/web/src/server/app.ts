@@ -1,5 +1,8 @@
 import { Hono } from "hono";
 import { replayReceipts } from "./webhooks";
+import { billingRoutes } from "./billing";
+import { refundRecipients } from "./credits";
+import { audioMime } from "./audio";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
@@ -394,6 +397,7 @@ apiApp.use("*", async (c, next) => {
   c.set("user", u);
   await next();
 });
+apiApp.route("/", billingRoutes);
 const listQuery = `SELECT l.*,u.name AS owner_name,(SELECT count(*) FROM contacts WHERE list_id=l.id) AS contact_count FROM lists l JOIN users u ON u.id=l.owner_id`;
 apiApp.get("/dashboard", (c) => {
   const u = c.get("user");
@@ -632,21 +636,22 @@ apiApp.post("/audio", async (c) => {
     !(file instanceof File) ||
     !file.size ||
     file.size > 10 * 1024 * 1024 ||
-    !/\.(mp3|wav)$/i.test(file.name)
+    !/\.(mp3|wav|flac|aac|wma|m4a|ogg)$/i.test(file.name)
   )
-    fail(400, "Upload an MP3 or WAV file up to 10 MB.");
+    fail(
+      400,
+      "Upload an MP3, WAV, FLAC, AAC, WMA, M4A, or OGG file up to 10 MB.",
+    );
   const bytes = Buffer.from(await file.arrayBuffer());
-  const wav =
-    bytes.toString("ascii", 0, 4) === "RIFF" &&
-    bytes.toString("ascii", 8, 12) === "WAVE";
-  const mp3 =
-    bytes.toString("ascii", 0, 3) === "ID3" ||
-    (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
-  if (!wav && !mp3) fail(400, "The file is not a valid MP3 or WAV recording.");
+  const mime = audioMime(file.name, bytes);
+  if (!mime)
+    fail(
+      400,
+      "The recording does not match a supported audio format. Export it as MP3, WAV, FLAC, AAC, WMA, M4A, or OGG.",
+    );
   const audioId = id();
   const filename =
     file.name.replace(/[^\w. -]/g, "").slice(0, 100) || "recording.mp3";
-  const mime = wav ? "audio/wav" : "audio/mpeg";
   await writeFile(resolve(uploadDir, audioId), bytes, {
     mode: 0o600,
     flag: "wx",
@@ -819,22 +824,42 @@ apiApp.post("/campaigns/:id/queue", (c) => {
     const units =
       contacts.length *
       (campaign.channel === "sms" ? smsParts(campaign.message).parts : 1);
+    const balance = one(
+      "SELECT voice_credits FROM users WHERE id=?",
+      campaign.owner_id,
+    )!;
+    const voiceUnits =
+      campaign.channel === "voice"
+        ? Math.min(contacts.length, balance.voice_credits)
+        : 0;
+    const allowanceUnits = units - voiceUnits;
     if (
       !run(
-        "UPDATE users SET allowance=allowance-? WHERE id=? AND allowance>=?",
-        units,
+        "UPDATE users SET allowance=allowance-?,voice_credits=voice_credits-? WHERE id=? AND allowance>=? AND voice_credits>=?",
+        allowanceUnits,
+        voiceUnits,
         campaign.owner_id,
-        units,
+        allowanceUnits,
+        voiceUnits,
       ).changes
     )
       fail(
         400,
-        `This campaign needs ${units} send units. Ask an administrator to increase your allowance.`,
+        campaign.channel === "voice"
+          ? `This campaign needs ${units} voice credits or send units. Buy voice credits or ask an administrator for allowance.`
+          : `This campaign needs ${units} send units. Ask an administrator to increase your allowance.`,
       );
     const insert = db.prepare(
-      "INSERT INTO deliveries(id,campaign_id,phone) VALUES(?,?,?)",
+      "INSERT INTO deliveries(id,campaign_id,phone,credit_source) VALUES(?,?,?,?)",
     );
-    contacts.forEach((r) => insert.run(id(), campaign.id, r.phone));
+    contacts.forEach((r, index) =>
+      insert.run(
+        id(),
+        campaign.id,
+        r.phone,
+        index < voiceUnits ? "voice" : "allowance",
+      ),
+    );
     run(
       "UPDATE campaigns SET status=?,queued_at=CURRENT_TIMESTAMP WHERE id=?",
       campaign.scheduled_at && campaign.scheduled_at > Date.now()
@@ -891,16 +916,11 @@ apiApp.post("/campaigns/:id/cancel", (c) => {
         409,
         "Only drafts, waiting campaigns, or paused campaigns can be cancelled.",
       );
-    const count = run(
-      "UPDATE deliveries SET status='cancelled' WHERE campaign_id=? AND status='pending'",
+    const cancelled = all(
+      "UPDATE deliveries SET status='cancelled' WHERE campaign_id=? AND status='pending' RETURNING credit_source",
       campaign.id,
-    ).changes;
-    run(
-      "UPDATE users SET allowance=allowance+? WHERE id=?",
-      count *
-        (campaign.channel === "sms" ? smsParts(campaign.message).parts : 1),
-      campaign.owner_id,
     );
+    refundRecipients(campaign, cancelled);
     audit(c.get("user").id, "campaign.cancelled", campaign.id);
   }).immediate();
   return c.json({ success: true });
@@ -942,7 +962,7 @@ apiApp.use("/admin/*", async (c, next) => {
 apiApp.get("/admin/users", (c) =>
   c.json({
     users: all(
-      "SELECT id,name,phone,email,role,status,allowance,created_at FROM users ORDER BY created_at DESC LIMIT 500",
+      "SELECT id,name,phone,email,role,status,allowance,voice_credits,created_at FROM users ORDER BY created_at DESC LIMIT 500",
     ),
   }),
 );

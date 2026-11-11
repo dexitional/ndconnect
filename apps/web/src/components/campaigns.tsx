@@ -21,6 +21,7 @@ import {
 import { Button, Input, Textarea, Select, Field, Dialog, Badge } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
 import { smsParts, number } from "../lib/shared";
+import { audioFormats } from "../lib/billing";
 import { Empty, Loading, QueryError, PageHeading, Status } from "./workspace";
 export function Campaigns({ admin = false }: { admin?: boolean }) {
   const client = useQueryClient();
@@ -621,12 +622,12 @@ export function Composer({ user }: { user: Row }) {
                   <strong>
                     {audio ? audio.filename : "Upload your voice recording"}
                   </strong>
-                  <span>MP3 or WAV · up to 10 MB</span>
+                  <span>MP3, WAV, FLAC, AAC, WMA, M4A, OGG · up to 10 MB</span>
                   <input
                     aria-label="Voice recording"
                     disabled={busy}
                     type="file"
-                    accept=".mp3,.wav,audio/mpeg,audio/wav"
+                    accept={audioFormats}
                     onChange={(e) => {
                       if (e.target.files?.[0]) {
                         setDraftId(null);
@@ -636,7 +637,16 @@ export function Composer({ user }: { user: Row }) {
                   />
                 </label>
                 {audio && (
-                  <audio className="audio-player" controls src={audio.url} />
+                  <>
+                    <audio className="audio-player" controls src={audio.url} />
+                    <p className="muted">
+                      If your browser cannot preview this format,{" "}
+                      <a href={audio.url} download={audio.filename}>
+                        download the recording
+                      </a>{" "}
+                      to listen.
+                    </p>
+                  </>
                 )}
               </>
             )}
@@ -710,12 +720,28 @@ export function Composer({ user }: { user: Row }) {
               <b>{number(units)}</b>
             </div>
             <div>
-              <span>Your allowance</span>
-              <b>{number(user.allowance)}</b>
+              <span>
+                {channel === "voice"
+                  ? "Available voice sends"
+                  : "Your allowance"}
+              </span>
+              <b>
+                {number(
+                  user.allowance +
+                    (channel === "voice" ? user.voice_credits || 0 : 0),
+                )}
+              </b>
             </div>
             <p>
-              Allowance is managed by your administrator. Actual provider
-              charges depend on your account plan.
+              {channel === "voice" ? (
+                <>
+                  {number(user.voice_credits || 0)} purchased voice credits plus{" "}
+                  {number(user.allowance)} general send units.{" "}
+                  <a href="/credits">Buy voice credits</a>.
+                </>
+              ) : (
+                "SMS uses your administrator-managed send allowance."
+              )}
             </p>
             <Button
               className="full"

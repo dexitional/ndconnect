@@ -17,6 +17,7 @@ export const publicUser = (u: Row) => ({
   email: u.email,
   role: u.role,
   allowance: u.allowance,
+  voice_credits: u.voice_credits,
 });
 export function session(c: Context, userId: string) {
   const value = token();

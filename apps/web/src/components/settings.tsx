@@ -76,6 +76,7 @@ export function AdminUsers() {
                 <th>Contact</th>
                 <th>Role</th>
                 <th>Send allowance</th>
+                <th>Voice credits</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -102,6 +103,7 @@ export function AdminUsers() {
                       <Badge>{u.role}</Badge>
                     </td>
                     <td>{number(u.allowance)} units</td>
+                    <td>{number(u.voice_credits || 0)}</td>
                     <td>
                       <Status value={u.status} />
                     </td>
@@ -703,6 +705,14 @@ export function Profile({ user }: { user: Row }) {
           <h3>Messaging allowance</h3>
           <p>
             <strong>{number(user.allowance)}</strong> send units available
+          </p>
+          <h3>Purchased voice credits</h3>
+          <p>
+            <strong>{number(user.voice_credits || 0)}</strong> voice credits
+            available.{" "}
+            <a className="text-link" href="/credits">
+              Buy voice credits
+            </a>
           </p>
           <p className="muted">
             Ask your administrator to allocate more units. One SMS part or one

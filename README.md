@@ -8,7 +8,8 @@ A full-stack communications workspace for bulk SMS and recorded voice campaigns 
 - Phone registration with provider-based OTP verification; password login and verified password reset; Google OpenID Connect sign-in.
 - Private contact lists, individual contact entry, CSV imports with normalization/deduplication and invalid-row reports, contact removal, and list deletion.
 - Shared lead library, consent confirmation, administrator approval/rejection, and automatic re-review after members add contacts to shared lists.
-- SMS composition with GSM-7/Unicode segmentation, voice recording upload/playback, audience selection, previews, review, draft saving, and scheduling.
+- SMS composition with GSM-7/Unicode segmentation, voice recording upload/playback, audience selection, previews, review, draft saving, and scheduling. Voice uploads accept MP3, WAV, FLAC, AAC, WMA, M4A, and OGG (up to 10 MB), with file-signature checks. Browser playback depends on codec support; a download link is available.
+- Manual Mobile Money purchases of voice credits, editable receiving details and rates, in-app payment notifications, and administrator approval with duplicate-credit protection.
 - Durable queue with recipient snapshots, 100-recipient gateway batches, transactional send allowance, atomic claims, cancellation, and recovery of interrupted work.
 - Recipient status reports and CSV export. Numbers available only through shared lists are masked for members in both reports and exports.
 - Signed Arkesel callbacks, replay protection, and an inbox for delivery callbacks received before the send response.
@@ -45,9 +46,19 @@ There is no default production password or public administrator registration. Se
 npm run admin:create
 ```
 
-Sign in at `/admin/login`. The command creates a verified administrator with 100,000 platform send units and refuses to overwrite an existing account. The operator must control the supplied phone number. New member accounts start with **zero** units; allocate units under **People & access**. One SMS part or one voice recipient consumes one unit. These units are an administrative sending limit, not a prepaid monetary wallet or a provider account balance.
+Sign in at `/admin/login`. The command creates a verified administrator with 100,000 platform send units and refuses to overwrite an existing account. The operator must control the supplied phone number. New member accounts start with **zero** units; allocate units under **People & access**. One SMS part or one voice recipient consumes one unit. These general units are an administrative sending limit, separate from purchased voice credits and the provider account balance. Members can also purchase voice credits as described below.
 
 Run this command **on the production server**, with the same `DATABASE_PATH` and environment as the web service. Git does not contain your local database or administrator credentials. A fresh deployment therefore needs its own administrator setup; setting `ADMIN_PHONE` and `ADMIN_PASSWORD` alone does not create an account. If the account already exists, use phone-verified password reset or inspect the existing account before changing it.
+
+### Buy voice credits with Mobile Money
+
+Members open **Voice credits**, enter a credit quantity, and create a payment request. The initial price is **GHC 0.40 per voice credit**, payable to **0558641826 — Ebenezer Kwabena Blay Ackah**. Administrators can edit the rate, receiving number, account name, and network under **Payments & credits → Payment settings**. Each request preserves its quoted rate, total, and payment destination even if settings change later.
+
+Send the exact quoted amount using your Mobile Money service, then enter the transaction ID, payer name and phone, network, amount, payment time, and any additional details. Submitting or updating these details alerts active administrators through the workspace notification bell (refreshed every 15 seconds). This is a manual transfer workflow; the application does not initiate the transfer or automatically verify a transaction ID.
+
+Administrators open **Payments & credits**, verify receipt in the receiving Mobile Money account, and approve or reject the request. Approval adds the quoted voice credits and notifies the member. Rejection requires a reason; members can correct and resubmit their details. Approved payments cannot be edited. Unique transaction IDs, revision checks, and an atomic purchase ledger prevent duplicate credits and approval of details that changed during review.
+
+One voice recipient reserves one credit when a campaign is queued. Purchased voice credits are used first, then general send allowance; purchased credits cannot fund SMS. Cancellation or a dispatch-time opt-out returns unsent units to the balance they came from. Submitted, rejected, or uncertain provider attempts retain their reservation pending operator reconciliation. Purchasing platform credits does not top up the gateway account: administrators must maintain the provider's separate balance.
 
 ### Provider selection and mNotify configuration
 
@@ -112,11 +123,11 @@ These are format examples only. Use actual contacts with permission. `phone` is 
 
 ## Queue and recovery
 
-Queue submission validates current list access, snapshots distinct recipients, excludes opt-outs, reserves allowance, and changes campaign state in one SQLite transaction. Repeated submission cannot create duplicate deliveries or reserve allowance twice. Scheduling is stored as a UTC timestamp; the UI accepts the browser’s local timezone.
+Queue submission validates current list access, snapshots distinct recipients, excludes opt-outs, reserves voice credits/general allowance, and changes campaign state in one SQLite transaction. Repeated submission cannot create duplicate deliveries or reserve allowance twice. Scheduling is stored as a UTC timestamp; the UI accepts the browser’s local timezone.
 
 The worker processes batches outside database transactions so a provider request does not hold a write lock. Each claim has a 120-second lease and an ownership token, checked before every batch. A recovered or cancelled claim cannot be overwritten by an obsolete worker. Suspended users, revoked lists, and new opt-outs are checked again before dispatch.
 
-If a timeout or process crash makes submission uncertain, in-flight recipients become `unknown` and the campaign becomes `attention`. **No unknown or failed delivery is automatically retried.** After resolving the gateway/account problem, **Resume unsent recipients** submits only recipients still marked `pending`; it never resubmits an uncertain batch. Consult the campaign’s provider dashboard before creating a replacement campaign for unknown results. A campaign requiring attention can be cancelled to release the allowance reserved for recipients never submitted. Provider-rejected or uncertain attempts retain their reservation; allowance is an administrative limit, not financial accounting.
+If a timeout or process crash makes submission uncertain, in-flight recipients become `unknown` and the campaign becomes `attention`. **No unknown or failed delivery is automatically retried.** After resolving the gateway/account problem, **Resume unsent recipients** submits only recipients still marked `pending`; it never resubmits an uncertain batch. Consult the campaign’s provider dashboard before creating a replacement campaign for unknown results. A campaign requiring attention can be cancelled to release the allowance reserved for recipients never submitted. Provider-rejected or uncertain attempts retain their reservation; the platform does not automatically refund attempts already submitted to a provider.
 
 Cancelling a waiting campaign returns its unsent reservation. Opt-outs discovered at dispatch also return their unused units. A batch already submitted cannot be recalled. The opt-out register is managed by administrators; automatic parsing of inbound STOP replies is not included because an inbound-number integration is not configured.
 
@@ -165,7 +176,7 @@ npm run build
 npm run test:production
 ```
 
-Backend tests use a temporary SQLite database and mocked provider responses. Browser tests create a separate temporary database, start a mock worker, and cover member login, phone signup, CSV import, SMS and voice submission, shared lists, admin allowance management, gateway status, and mobile navigation. They never contact real recipients or use the supplied API key. The browser configuration uses installed Google Chrome on macOS; set `CHROME_PATH` for another installation. Screenshots are written to ignored `test-results/`.
+Backend tests use a temporary SQLite database and mocked provider responses. Browser tests create a separate temporary database, start a mock worker, and cover member login, phone signup, CSV import, SMS and voice submission, shared lists, admin allowance management, gateway status, Mobile Money submission and approval, editable rates, notifications, and mobile navigation. Backend tests also cover duplicate approvals, changed payment revisions, access controls, separate credit balances, refunds, and all seven audio formats. They never contact real recipients or use the supplied API key. The browser configuration uses installed Google Chrome on macOS; set `CHROME_PATH` for another installation. Screenshots are written to ignored `test-results/`.
 
 For deliberate manual testing only, set `MOCK_PROVIDER=true` in a non-production environment; OTP is then `123456` and gateway results are explicitly mocked. Production rejects this setting. Keep test fixtures separate from your real database. Google’s live consent flow and actual SMS/voice delivery still require your configured provider accounts and an authorized recipient test.
 

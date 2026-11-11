@@ -235,3 +235,131 @@ test("mobile layout fits and navigation opens; signup verifies a phone", async (
     caret: "initial",
   });
 });
+
+test("member submits Mobile Money details, admin gets notified and approves voice credits, and rates remain editable", async ({
+  page,
+  browser,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Phone number").fill("0245559002");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("link", { name: "Voice credits", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Voice credits", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("0558641826", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Ebenezer Kwabena Blay Ackah", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Number of voice credits").fill("25");
+  await page.getByRole("button", { name: "Create payment request" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("GHC 10.00", { exact: true })).toBeVisible();
+  await dialog
+    .getByLabel("Mobile Money transaction ID")
+    .fill("BROWSER-MOMO-123456");
+  await dialog.getByLabel("Payer name", { exact: true }).fill("Ama Mensah");
+  await dialog.getByLabel("Payer phone number").fill("0245559002");
+  await dialog
+    .getByLabel("Additional payment details (optional)")
+    .fill("Test payment submitted for review.");
+  await dialog
+    .getByRole("button", { name: "Submit payment for confirmation" })
+    .click();
+  await expect(
+    page.getByText(
+      "Payment details submitted. Administrators have been notified.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "pending", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("0 purchased credits available")).toBeVisible();
+  await expect(page.locator(".content")).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: "test-results/voice-credits.png",
+    fullPage: true,
+  });
+
+  const adminContext = await browser.newContext();
+  const adminPage = await adminContext.newPage();
+  try {
+    await adminPage.goto("http://127.0.0.1:3111/admin/login");
+    await adminPage.getByLabel("Phone number").fill("0245559001");
+    await adminPage
+      .getByLabel("Password", { exact: true })
+      .fill("Browser-test-password");
+    await adminPage
+      .getByRole("button", { name: "Sign in", exact: true })
+      .click();
+    await adminPage
+      .getByRole("button", { name: /Notifications \(1 unread\)/ })
+      .click();
+    await expect(
+      adminPage.getByText("Payment awaiting confirmation", { exact: true }),
+    ).toBeVisible();
+    await adminPage
+      .getByRole("link", { name: /Payment awaiting confirmation/ })
+      .click();
+    const review = adminPage.getByRole("dialog");
+    await expect(
+      review.getByText("BROWSER-MOMO-123456", { exact: true }),
+    ).toBeVisible();
+    await review
+      .getByLabel("Review note / rejection reason")
+      .fill("Confirmed test payment.");
+    await adminPage.screenshot({
+      path: "test-results/payment-review.png",
+      fullPage: true,
+    });
+    await review
+      .getByRole("button", { name: "Confirm payment & add 25 credits" })
+      .click();
+    await expect(
+      adminPage.getByText("Payment approved. Voice credits added."),
+    ).toBeVisible();
+    await adminPage
+      .getByRole("button", { name: "Payment settings", exact: true })
+      .click();
+    await adminPage.getByLabel("Price per voice credit (GHC)").fill("0.55");
+    await adminPage
+      .getByRole("button", { name: "Save payment settings" })
+      .click();
+    await expect(adminPage.getByText("Payment settings saved.")).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByText("25 purchased credits available"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("GHC 0.55 per credit", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "GHC 10.00", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "approved", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: /Notifications \(1 unread\)/ })
+      .click();
+    await expect(
+      page.getByText("Voice credits added", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Close dialog" }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: "test-results/voice-credits-mobile.png",
+      fullPage: true,
+    });
+  } finally {
+    await adminContext.close();
+  }
+});
