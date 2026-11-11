@@ -19,12 +19,15 @@ import {
   Radio,
   Copy,
   RefreshCw,
+  Pencil,
+  X,
 } from "lucide-react";
 import { Button, Input, Textarea, Select, Field, Dialog, Badge } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
 import { smsParts, number } from "../lib/shared";
 import { audioFormats } from "../lib/billing";
 import { Empty, Loading, QueryError, PageHeading, Status } from "./workspace";
+import { ContactManager, CreateContactList } from "./contacts";
 export function Campaigns({ admin = false }: { admin?: boolean }) {
   const client = useQueryClient();
   const q = useQuery({
@@ -421,6 +424,8 @@ export function Composer({ user }: { user: Row }) {
     (s: Row) => s.id === senderId,
   );
   const [ids, setIds] = useState<string[]>([]);
+  const [createList, setCreateList] = useState(false);
+  const [editingList, setEditingList] = useState<Row | null>(null);
   const [audio, setAudio] = useState<Row | null>(null);
   const [scheduled, setScheduled] = useState("");
   const [busy, setBusy] = useState(false);
@@ -509,6 +514,28 @@ export function Composer({ user }: { user: Row }) {
   }
   return (
     <>
+      {createList && (
+        <CreateContactList
+          close={() => setCreateList(false)}
+          onCreated={(list) => {
+            setIds((current) => [...current, list.id]);
+            setDraftId(null);
+            setEditingList({ ...list, owner_id: user.id });
+          }}
+        />
+      )}
+      {editingList && (
+        <ContactManager
+          list={
+            lists.data?.find((list) => list.id === editingList.id) ||
+            editingList
+          }
+          close={() => {
+            setEditingList(null);
+            setDraftId(null);
+          }}
+        />
+      )}
       <a href="/campaigns" className="back-link">
         <ArrowLeft size={15} /> Back to campaigns
       </a>
@@ -591,36 +618,67 @@ export function Composer({ user }: { user: Row }) {
             ) : lists.data?.length ? (
               <div className="audience-list">
                 {lists.data.map((l) => (
-                  <label
+                  <div
                     key={l.id}
-                    className={`audience-option ${ids.includes(l.id) ? "checked" : ""}`}
+                    className={`audience-row ${ids.includes(l.id) ? "attached" : ""}`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={ids.includes(l.id)}
-                      onChange={() => {
-                        setIds(
-                          ids.includes(l.id)
-                            ? ids.filter((i) => i !== l.id)
-                            : [...ids, l.id],
-                        );
-                        setDraftId(null);
-                      }}
-                    />
-                    <span className="list-icon small-icon">
-                      <Users size={18} />
-                    </span>
-                    <span>
-                      <strong>{l.name}</strong>
-                      <small>
-                        {l.owner_id === user.id
-                          ? "Your list"
-                          : "Shared by " + l.owner_name}{" "}
-                        · {l.category}
-                      </small>
-                    </span>
-                    <Badge>{number(l.contact_count)}</Badge>
-                  </label>
+                    <label
+                      className={`audience-option ${ids.includes(l.id) ? "checked" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ids.includes(l.id)}
+                        onChange={() => {
+                          setIds(
+                            ids.includes(l.id)
+                              ? ids.filter((i) => i !== l.id)
+                              : [...ids, l.id],
+                          );
+                          setDraftId(null);
+                        }}
+                      />
+                      <span className="list-icon small-icon">
+                        <Users size={18} />
+                      </span>
+                      <span>
+                        <strong>{l.name}</strong>
+                        <small>
+                          {l.owner_id === user.id
+                            ? "Your list"
+                            : "Shared by " + l.owner_name}{" "}
+                          · {l.category}
+                        </small>
+                      </span>
+                      <Badge>{number(l.contact_count)}</Badge>
+                    </label>
+                    {ids.includes(l.id) && (
+                      <div className="audience-actions">
+                        {(l.owner_id === user.id || user.role === "admin") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Edit ${l.name}`}
+                            onClick={() => setEditingList(l)}
+                          >
+                            <Pencil size={14} /> Edit
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Remove ${l.name} from campaign`}
+                          onClick={() => {
+                            setIds((current) =>
+                              current.filter((id) => id !== l.id),
+                            );
+                            setDraftId(null);
+                          }}
+                        >
+                          <X size={14} /> Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             ) : (
@@ -628,15 +686,15 @@ export function Composer({ user }: { user: Row }) {
                 icon={Users}
                 title="Your audience is waiting"
                 description="Create a list and import contacts before sending."
-                action={
-                  <Button asChild variant="outline">
-                    <a href="/contacts">
-                      Add contacts <ArrowRight size={15} />
-                    </a>
-                  </Button>
-                }
               />
             )}
+            <Button
+              className="new-audience"
+              variant="outline"
+              onClick={() => setCreateList(true)}
+            >
+              <Plus size={16} /> New contact list
+            </Button>
             <p className="field-hint">
               Duplicate numbers and opted-out contacts are removed automatically
               before sending.

@@ -1,3 +1,4 @@
+import { ContactUs } from "./contact-us";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -26,7 +27,8 @@ import {
   Activity,
   Ban,
   ArrowRight,
-  HelpCircle,
+  CircleHelp,
+  CornerDownLeft,
   Globe,
   ChevronDown,
   CreditCard,
@@ -225,7 +227,11 @@ export function Workspace({ page = "" }: { page?: string }) {
   ];
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
+      <aside
+        className={`sidebar ${mobile ? "sidebar-open" : ""}`}
+        aria-label={admin ? "Admin navigation" : "Workspace navigation"}
+        tabIndex={0}
+      >
         <a className="brand" href={admin ? "/admin" : "/"}>
           <img src={logoUrl} alt="NDC" />
           <span>
@@ -245,8 +251,10 @@ export function Workspace({ page = "" }: { page?: string }) {
             {admin ? <ShieldCheck size={18} /> : <Globe size={18} />}
           </span>
           <span>
-            <strong>{admin ? "Administration" : "My workspace"}</strong>
-            <small>{admin ? "Platform management" : "NDC Connect"}</small>
+            <strong>
+              {admin ? "Administration Platform" : "My workspace"}
+            </strong>
+            {!admin && <small>NDC Connect</small>}
           </span>
           <ChevronDown size={16} />
         </button>
@@ -345,20 +353,30 @@ export function Workspace({ page = "" }: { page?: string }) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <kbd>↵</kbd>
+              <button
+                className="search-submit"
+                type="submit"
+                aria-label="Submit campaign search"
+              >
+                <CornerDownLeft size={16} />
+              </button>
             </form>
             <span className="top-divider" />
             <NotificationBell />
             <a
-              className="help-link"
+              className="help-link top-icon"
               href="/settings"
               aria-label="Workspace help"
             >
-              <HelpCircle size={20} />
+              <CircleHelp size={20} />
             </a>
-            <span className="avatar small">
+            <a
+              className="avatar small"
+              href="/settings"
+              aria-label="My profile"
+            >
               {user.name.slice(0, 2).toUpperCase()}
-            </span>
+            </a>
           </div>
         </header>
         <motion.main
@@ -398,7 +416,7 @@ export function Workspace({ page = "" }: { page?: string }) {
           ) : page === "admin/payments" ? (
             <AdminPayments />
           ) : page === "admin/users" ? (
-            <AdminUsers />
+            <AdminUsers user={user} />
           ) : page === "admin/leads" ? (
             <AdminLists />
           ) : page === "admin/gateway" ? (
@@ -410,7 +428,9 @@ export function Workspace({ page = "" }: { page?: string }) {
           )}
         </motion.main>
         <footer className="app-footer">
-          <span>Every connection counts.</span>
+          <span className="footer-contact">
+            © {new Date().getFullYear()} <ContactUs />
+          </span>
           <span>
             <span className="live-dot" /> NDC Connect{" "}
             <span className="footer-separator">/</span> SMS & voice messaging

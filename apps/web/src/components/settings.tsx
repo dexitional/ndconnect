@@ -23,12 +23,19 @@ import { api, patch, post, type Row } from "../lib/api";
 import { Empty, PageHeading, Loading, QueryError, Status } from "./workspace";
 import { ContactManager } from "./contacts";
 import { number } from "../lib/shared";
-export function AdminUsers() {
+import { ContactSettings } from "./contact-us";
+import { AdminAccountDialog } from "./admin-account";
+export function AdminUsers({ user }: { user: Row }) {
   const q = useQuery({
     queryKey: ["admin-users"],
     queryFn: () => api("/admin/users"),
   });
   const [search, setSearch] = useState("");
+  const [role, setRole] = useState("all");
+  const [accountDialog, setAccountDialog] = useState<{
+    account?: Row;
+    reset?: boolean;
+  } | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
   const [grant, setGrant] = useState(1000);
   const [creditType, setCreditType] = useState("sms");
@@ -54,8 +61,12 @@ export function AdminUsers() {
       <PageHeading
         eyebrow="YOUR PLATFORM, YOUR PEOPLE"
         title="People & access"
-        description="Manage member access and allocate SMS or voice credits."
-      />
+        description="Manage administrators, member access, and SMS or voice credits."
+      >
+        <Button onClick={() => setAccountDialog({})}>
+          <Plus size={16} /> Add administrator
+        </Button>
+      </PageHeading>
       <div className="toolbar">
         <div className="search-field">
           <Search size={17} />
@@ -66,7 +77,16 @@ export function AdminUsers() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Badge>{q.data.users.length} members</Badge>
+        <Select
+          aria-label="Filter account role"
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+        >
+          <option value="all">All accounts</option>
+          <option value="admin">Administrators</option>
+          <option value="user">Members</option>
+        </Select>
+        <Badge>{q.data.users.length} accounts</Badge>
       </div>
       <section className="panel">
         <div className="table-scroll">
@@ -84,10 +104,12 @@ export function AdminUsers() {
             </thead>
             <tbody>
               {q.data.users
-                .filter((u: Row) =>
-                  `${u.name} ${u.phone} ${u.email}`
-                    .toLowerCase()
-                    .includes(search.toLowerCase()),
+                .filter(
+                  (u: Row) =>
+                    (role === "all" || u.role === role) &&
+                    `${u.name} ${u.phone} ${u.email}`
+                      .toLowerCase()
+                      .includes(search.toLowerCase()),
                 )
                 .map((u: Row) => (
                   <tr key={u.id}>
@@ -110,6 +132,28 @@ export function AdminUsers() {
                     </td>
                     <td>
                       <div className="row-actions">
+                        {u.id !== user.id && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setAccountDialog({ account: u })}
+                            >
+                              Manage account
+                            </Button>
+                            {u.role === "admin" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setAccountDialog({ account: u, reset: true })
+                                }
+                              >
+                                <LockKeyhole size={14} /> Reset password
+                              </Button>
+                            )}
+                          </>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -121,6 +165,7 @@ export function AdminUsers() {
                           variant="ghost"
                           size="sm"
                           busy={busy}
+                          disabled={u.id === user.id}
                           onClick={() =>
                             void update(u, {
                               status:
@@ -138,6 +183,15 @@ export function AdminUsers() {
           </table>
         </div>
       </section>
+      {accountDialog && (
+        <AdminAccountDialog
+          {...accountDialog}
+          close={() => setAccountDialog(null)}
+          saved={async () => {
+            await q.refetch();
+          }}
+        />
+      )}
       <Dialog
         open={!!selected}
         onOpenChange={() => setSelected(null)}
@@ -304,7 +358,13 @@ export function AdminLists() {
         )}
       </section>
       {selected && (
-        <ContactManager list={selected} close={() => setSelected(null)} />
+        <ContactManager
+          list={
+            q.data.lists.find((list: Row) => list.id === selected.id) ||
+            selected
+          }
+          close={() => setSelected(null)}
+        />
       )}
     </>
   );
@@ -338,6 +398,7 @@ export function Gateway() {
         </Button>
       </PageHeading>
       <div className="settings-grid">
+        <ContactSettings />
         <section className="panel settings-panel">
           <div className="settings-title">
             <span className="stat-icon green">

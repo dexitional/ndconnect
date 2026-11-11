@@ -123,7 +123,7 @@ Use the equivalent HTTPS URI for production. Set `GOOGLE_CLIENT_ID` and `GOOGLE_
 
 ### Add contacts to an existing list
 
-Open **My contacts → Manage contacts** on the existing list. Choose **Add contact** to enter an optional name and a phone number, confirm permission, and select **Save contact**. Use **Upload CSV** to append another file to that same list. Existing contacts are preserved, numbers are normalized, and duplicates are rejected for individual entry or skipped during CSV imports. Member additions to shared lists return the list to pending administrator review. Already queued campaigns retain their original recipient snapshots; new contacts are available to subsequent campaigns.
+Open **My contacts → Manage contacts** on the existing list. Choose **Add contact** to enter an optional name and a phone number, select **Save contact**. Use **Upload CSV** to append another file to that same list. Existing contacts are preserved, numbers are normalized, and duplicates are rejected for individual entry or skipped during CSV imports. Member additions to shared lists return the list to pending administrator review. Already queued campaigns retain their original recipient snapshots; new contacts are available to subsequent campaigns.
 
 ### Contact CSV format
 
@@ -212,3 +212,5 @@ files/                 Original login reference and supplied logos
 Brand colors, layout tokens, responsive rules, and reduced-motion behavior live in `apps/web/src/styles.css`; reusable components live in `packages/ui/src/index.tsx`. Framer Motion supplies the page entrance effects. Framework setup follows [TanStack Start’s Vite documentation](https://tanstack.com/start/latest/docs/framework/react/build-from-scratch). Database configuration follows [SQLite’s WAL documentation](https://www.sqlite.org/wal.html).
 
 Secrets, databases, uploads, generated output, and the original credential-bearing `AGENT.md` are ignored by Git. No provider key is embedded in client code.
+
+Administrators can edit the public Contact us email, phone, address, and office hours under **Gateway settings → Contact us details**. The footer popup is available before and after sign-in. In **Bring your audience**, create a list to attach it automatically and add contacts without leaving the campaign. Edit opens list management; Remove detaches the list from the campaign. **My contacts → Send message** opens a new campaign with that list selected.

@@ -272,7 +272,7 @@ test("OTP expiry, five-attempt cap and resend cooldown are enforced", async () =
     400,
   );
 });
-test("CSV import normalizes, deduplicates, reports invalid rows and requires consent", async () => {
+test("CSV import normalizes, deduplicates, reports invalid rows without a confirmation checkbox", async () => {
   const list = newList();
   const f = new FormData();
   f.append(
@@ -285,8 +285,6 @@ test("CSV import normalizes, deduplicates, reports invalid rows and requires con
       { type: "text/csv" },
     ),
   );
-  assert.equal((await req(`/lists/${list}/import`, "POST", f)).res.status, 400);
-  f.append("consent", "true");
   const r = await req(`/lists/${list}/import`, "POST", f);
   assert.equal(r.res.status, 200);
   assert.equal(r.data.inserted, 2);
@@ -880,7 +878,6 @@ test("manual additions enforce validation, consent, authentication, and list per
     401,
   );
   for (const body of [
-    { phone: input.phone },
     { ...input, consent: false },
     { ...input, phone: "not-a-phone" },
     { ...input, name: "a".repeat(101) },
@@ -2869,4 +2866,308 @@ test("SMS and voice payment submissions and reviews queue alerts for the user an
       2,
     );
   }
+});
+
+test("contact details are public, validated, and editable only by admins", async () => {
+  const contact = {
+    email: "help@example.com",
+    phone: "+233 24 123 4567",
+    address: "Accra",
+    hours: "Mon–Fri, 9am–5pm",
+  };
+  assert.equal(
+    (await req("/admin/contact-details", "PATCH", contact, null)).res.status,
+    401,
+  );
+  assert.equal(
+    (await req("/admin/contact-details", "PATCH", contact)).res.status,
+    403,
+  );
+  assert.equal(
+    (
+      await req(
+        "/admin/contact-details",
+        "PATCH",
+        { ...contact, email: "invalid" },
+        admin,
+      )
+    ).res.status,
+    400,
+  );
+  assert.equal(
+    (await req("/admin/contact-details", "PATCH", contact, admin)).res.status,
+    200,
+  );
+  assert.deepEqual(
+    (await req("/contact-details", "GET", undefined, null)).data.contact,
+    contact,
+  );
+});
+
+test("list details can be edited by their owner and contacts added without a checkbox", async () => {
+  const list = newList();
+  assert.equal(
+    (await req(`/lists/${list}`, "PATCH", { name: "Renamed team" }, other)).res
+      .status,
+    404,
+  );
+  assert.equal(
+    (
+      await req(`/lists/${list}`, "PATCH", {
+        name: "Renamed team",
+        description: "Updated",
+      })
+    ).res.status,
+    200,
+  );
+  assert.equal(
+    one("SELECT name FROM lists WHERE id=?", list)!.name,
+    "Renamed team",
+  );
+  assert.equal(
+    (
+      await req(`/lists/${list}/contacts`, "POST", {
+        name: "Ama",
+        phone: "0245556789",
+      })
+    ).res.status,
+    201,
+  );
+});
+
+test("admins provision accounts, enforce unique identifiers, and manage roles without losing their own access", async () => {
+  const input = {
+    name: "Additional Admin",
+    phone: "0245557701",
+    email: "additional-admin@example.com",
+    password: "Initial-admin-password",
+  };
+  assert.equal(
+    (await req("/admin/users", "POST", input, null)).res.status,
+    401,
+  );
+  assert.equal(
+    (await req("/admin/users", "POST", input, member)).res.status,
+    403,
+  );
+  assert.equal(
+    (await req("/admin/users", "POST", { ...input, password: "short" }, admin))
+      .res.status,
+    400,
+  );
+  const created = await req("/admin/users", "POST", input, admin);
+  assert.equal(created.res.status, 201);
+  const target = created.data.user.id;
+  assert.equal(created.data.user.role, "admin");
+  assert.equal(created.data.user.phone, "+233245557701");
+  assert.equal(created.data.user.password_hash, undefined);
+  const { compare } = await import("bcryptjs");
+  assert.ok(
+    await compare(
+      input.password,
+      one("SELECT password_hash FROM users WHERE id=?", target)!.password_hash,
+    ),
+  );
+  assert.equal(
+    (
+      await req(
+        "/admin/users",
+        "POST",
+        { ...input, phone: "+233245557701" },
+        admin,
+      )
+    ).res.status,
+    409,
+  );
+  assert.equal(
+    (
+      await req(
+        "/admin/users",
+        "POST",
+        {
+          ...input,
+          phone: "0245557702",
+          email: "ADDITIONAL-ADMIN@EXAMPLE.COM",
+        },
+        admin,
+      )
+    ).res.status,
+    409,
+  );
+  assert.equal(
+    (await req(`/admin/users/${admin}`, "PATCH", { role: "user" }, admin)).res
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${admin}`,
+        "PATCH",
+        { status: "suspended" },
+        admin,
+      )
+    ).res.status,
+    400,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${target}`,
+        "PATCH",
+        { name: "Unauthorized" },
+        member,
+      )
+    ).res.status,
+    403,
+  );
+  run(
+    "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+    hash(target),
+    target,
+    Date.now() + 60000,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${target}`,
+        "PATCH",
+        { name: "Managed Admin", role: "user", status: "active" },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  assert.equal(
+    one("SELECT name FROM users WHERE id=?", target)!.name,
+    "Managed Admin",
+  );
+  assert.equal(
+    one("SELECT count(*) AS n FROM sessions WHERE user_id=?", target)!.n,
+    0,
+  );
+  assert.equal(
+    (await req(`/admin/users/${target}`, "PATCH", { role: "admin" }, admin)).res
+      .status,
+    200,
+  );
+  assert.equal(one("SELECT role FROM users WHERE id=?", target)!.role, "admin");
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${target}`,
+        "PATCH",
+        { status: "suspended" },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  assert.equal(
+    (await req(`/admin/users/${target}`, "PATCH", { status: "active" }, admin))
+      .res.status,
+    200,
+  );
+  assert.equal(
+    (await req(`/admin/users/${target}`, "PATCH", { phone: "" }, admin)).res
+      .status,
+    400,
+  );
+  assert.equal(
+    one(
+      "SELECT count(*) AS n FROM audit_log WHERE target_id=? AND detail LIKE ?",
+      target,
+      "%" + input.password + "%",
+    )!.n,
+    0,
+  );
+});
+
+test("admin password resets revoke sessions, clear stale recovery codes, and preserve account data", async () => {
+  const input = {
+    name: "Reset Admin",
+    phone: "0245557703",
+    password: "Original-admin-password",
+  };
+  const created = await req("/admin/users", "POST", input, admin);
+  const target = created.data.user.id;
+  const password = "Replacement-admin-password";
+  const path = `/admin/users/${target}/reset-password`;
+  assert.equal((await req(path, "POST", { password }, null)).res.status, 401);
+  assert.equal((await req(path, "POST", { password }, member)).res.status, 403);
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${admin}/reset-password`,
+        "POST",
+        { password },
+        admin,
+      )
+    ).res.status,
+    400,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${member}/reset-password`,
+        "POST",
+        { password },
+        admin,
+      )
+    ).res.status,
+    404,
+  );
+  assert.equal(
+    (await req(path, "POST", { password: "short" }, admin)).res.status,
+    400,
+  );
+  run(
+    "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+    hash(target),
+    target,
+    Date.now() + 60000,
+  );
+  run(
+    "INSERT INTO otp_requests(phone,requested_at) VALUES(?,?)",
+    created.data.user.phone,
+    Date.now(),
+  );
+  run("UPDATE users SET allowance=123,voice_credits=45 WHERE id=?", target);
+  assert.equal(
+    (await req("/admin/users", "GET", undefined, target)).res.status,
+    200,
+  );
+  assert.equal((await req(path, "POST", { password }, admin)).res.status, 200);
+  const { compare } = await import("bcryptjs");
+  const account = one("SELECT * FROM users WHERE id=?", target)!;
+  assert.ok(await compare(password, account.password_hash));
+  assert.equal(await compare(input.password, account.password_hash), false);
+  assert.equal(account.allowance, 123);
+  assert.equal(account.voice_credits, 45);
+  assert.equal(account.status, "active");
+  assert.equal(
+    (await req("/admin/users", "GET", undefined, target)).res.status,
+    401,
+  );
+  assert.equal(
+    one("SELECT count(*) AS n FROM otp_requests WHERE phone=?", account.phone)!
+      .n,
+    0,
+  );
+  assert.equal(
+    one(
+      "SELECT count(*) AS n FROM audit_log WHERE action='admin.password_reset' AND actor_id=? AND target_id=?",
+      admin,
+      target,
+    )!.n,
+    1,
+  );
+  assert.equal(
+    one(
+      "SELECT count(*) AS n FROM audit_log WHERE target_id=? AND detail LIKE ?",
+      target,
+      "%" + password + "%",
+    )!.n,
+    0,
+  );
 });

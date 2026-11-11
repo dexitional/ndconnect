@@ -116,6 +116,13 @@ apiApp.get("/health", (c) => {
   one("SELECT 1");
   return c.json({ status: "ok" });
 });
+function contactDetails() {
+  const saved = one("SELECT value FROM settings WHERE key='contact_details'");
+  return saved
+    ? JSON.parse(saved.value)
+    : { email: "", phone: "", address: "", hours: "" };
+}
+apiApp.get("/contact-details", (c) => c.json({ contact: contactDetails() }));
 apiApp.get("/config", (c) =>
   c.json({
     googleEnabled: Boolean(
@@ -501,10 +508,7 @@ apiApp.post("/lists/:id/contacts", async (c) => {
     .object({
       name: z.string().trim().max(100).default(""),
       phone: phoneSchema,
-      consent: z.literal(true, {
-        error:
-          "Confirm you have permission to contact and, when shared, share this contact.",
-      }),
+      consent: z.literal(true).optional(),
     })
     .parse(await c.req.json());
   const contactId = id();
@@ -533,15 +537,25 @@ apiApp.patch("/lists/:id", async (c) => {
   const u = c.get("user");
   const l = ownedList(c.req.param("id"), u);
   const b = z
-    .object({ visibility: z.enum(["private", "shared"]) })
+    .object({
+      visibility: z.enum(["private", "shared"]).optional(),
+      name: z.string().trim().min(2).max(100).optional(),
+      description: z.string().max(500).optional(),
+      category: z.string().max(50).optional(),
+    })
     .parse(await c.req.json());
   run(
-    "UPDATE lists SET visibility=?,status=? WHERE id=?",
-    b.visibility,
-    b.visibility === "shared" && u.role !== "admin" ? "pending" : "approved",
+    "UPDATE lists SET name=?,description=?,category=?,visibility=?,status=? WHERE id=?",
+    b.name ?? l.name,
+    b.description ?? l.description,
+    b.category ?? l.category,
+    b.visibility ?? l.visibility,
+    (b.visibility ?? l.visibility) === "shared" && u.role !== "admin"
+      ? "pending"
+      : "approved",
     l.id,
   );
-  audit(u.id, "list.visibility", l.id, b.visibility);
+  audit(u.id, "list.updated", l.id, JSON.stringify(b));
   return c.json({ success: true });
 });
 apiApp.delete("/lists/:id", (c) => {
@@ -561,7 +575,7 @@ apiApp.post("/lists/:id/import", async (c) => {
     !/\.csv$/i.test(file.name)
   )
     fail(400, "Upload a CSV file up to 5 MB.");
-  if (form.get("consent") !== "true")
+  if (form.has("consent") && form.get("consent") !== "true")
     fail(
       400,
       "Confirm you have permission to contact and, when shared, share these contacts.",
@@ -1060,33 +1074,186 @@ apiApp.get("/admin/users", (c) =>
     ),
   }),
 );
+const accountEmail = z
+  .union([z.string().trim().toLowerCase().pipe(z.email()), z.literal("")])
+  .transform((v) => v || null);
+function activeAdmin(actorId: string) {
+  if (
+    !one(
+      "SELECT id FROM users WHERE id=? AND role='admin' AND status='active'",
+      actorId,
+    )
+  )
+    fail(403, "Administrator access required.");
+}
+function uniqueAccountDetails(
+  phone: string | null,
+  email: string | null,
+  exceptId = "",
+) {
+  if (
+    phone &&
+    one("SELECT id FROM users WHERE phone=? AND id<>?", phone, exceptId)
+  )
+    fail(409, "An account already uses this phone number.");
+  if (
+    email &&
+    one(
+      "SELECT id FROM users WHERE lower(email)=lower(?) AND id<>?",
+      email,
+      exceptId,
+    )
+  )
+    fail(409, "An account already uses this email address.");
+}
+apiApp.post("/admin/users", async (c) => {
+  const b = z
+    .object({
+      name: z.string().trim().min(2).max(100),
+      phone: phoneSchema,
+      email: accountEmail.optional(),
+      password: passwordSchema,
+    })
+    .parse(await c.req.json());
+  const digest = await passwordHash(b.password, 12);
+  const userId = id();
+  db.transaction(() => {
+    activeAdmin(c.get("user").id);
+    uniqueAccountDetails(b.phone, b.email ?? null);
+    run(
+      "INSERT INTO users(id,name,phone,email,password_hash,role,verified) VALUES(?,?,?,?,?,'admin',1)",
+      userId,
+      b.name,
+      b.phone,
+      b.email ?? null,
+      digest,
+    );
+    audit(c.get("user").id, "admin.created", userId);
+  }).immediate();
+  return c.json(
+    { user: publicUser(one("SELECT * FROM users WHERE id=?", userId)!) },
+    201,
+  );
+});
 apiApp.patch("/admin/users/:id", async (c) => {
   const b = z
     .object({
+      name: z.string().trim().min(2).max(100).optional(),
+      phone: z
+        .union([phoneSchema, z.literal("")])
+        .transform((v) => v || null)
+        .optional(),
+      email: accountEmail.optional(),
+      role: z.enum(["admin", "user"]).optional(),
       status: z.enum(["active", "suspended"]).optional(),
       grant: z.number().int().min(1).max(1000000).optional(),
       creditType: z.enum(["sms", "voice"]).default("sms"),
     })
     .parse(await c.req.json());
-  const target = one("SELECT * FROM users WHERE id=?", c.req.param("id"));
-  if (!target) fail(404, "Account not found.");
-  if (target.id === c.get("user").id && b.status === "suspended")
-    fail(400, "You cannot suspend yourself.");
   db.transaction(() => {
-    if (b.status) {
-      run("UPDATE users SET status=? WHERE id=?", b.status, target.id);
-      if (b.status === "suspended")
-        run("DELETE FROM sessions WHERE user_id=?", target.id);
-    }
+    const actorId = c.get("user").id;
+    activeAdmin(actorId);
+    const target = one("SELECT * FROM users WHERE id=?", c.req.param("id"));
+    if (!target) fail(404, "Account not found.");
+    if (
+      target.id === actorId &&
+      (b.status === "suspended" || b.role === "user")
+    )
+      fail(
+        400,
+        "You cannot suspend yourself or remove your own administrator access.",
+      );
+    const role = b.role ?? target.role;
+    const status = b.status ?? target.status;
+    if (
+      target.role === "admin" &&
+      target.status === "active" &&
+      (role !== "admin" || status !== "active") &&
+      !one(
+        "SELECT id FROM users WHERE role='admin' AND status='active' AND id<>?",
+        target.id,
+      )
+    )
+      fail(400, "Keep at least one active administrator.");
+    const phone = b.phone === undefined ? target.phone : b.phone;
+    const email = b.email === undefined ? target.email : b.email;
+    if (b.phone !== undefined && !phone && !target.google_id)
+      fail(400, "A phone number is required for this account.");
+    uniqueAccountDetails(phone, email, target.id);
+    run(
+      "UPDATE users SET name=?,phone=?,email=?,role=?,status=?,verified=? WHERE id=?",
+      b.name ?? target.name,
+      phone,
+      email,
+      role,
+      status,
+      phone !== target.phone && phone ? 1 : target.verified,
+      target.id,
+    );
+    if (
+      status === "suspended" ||
+      role !== target.role ||
+      phone !== target.phone ||
+      email !== target.email
+    )
+      run("DELETE FROM sessions WHERE user_id=?", target.id);
+    if (phone !== target.phone && target.phone)
+      run("DELETE FROM otp_requests WHERE phone=?", target.phone);
     if (b.grant)
       run(
         `UPDATE users SET ${b.creditType === "voice" ? "voice_credits=voice_credits" : "allowance=allowance"}+? WHERE id=?`,
         b.grant,
         target.id,
       );
-    audit(c.get("user").id, "user.updated", target.id, JSON.stringify(b));
+    audit(actorId, "user.updated", target.id, JSON.stringify(b));
   }).immediate();
   return c.json({ success: true });
+});
+apiApp.post("/admin/users/:id/reset-password", async (c) => {
+  const b = z.object({ password: passwordSchema }).parse(await c.req.json());
+  const actorId = c.get("user").id;
+  const targetId = c.req.param("id");
+  if (targetId === actorId)
+    fail(400, "Use password recovery to reset your own password.");
+  if (!one("SELECT id FROM users WHERE id=? AND role='admin'", targetId))
+    fail(404, "Administrator account not found.");
+  const digest = await passwordHash(b.password, 12);
+  db.transaction(() => {
+    activeAdmin(actorId);
+    const target = one(
+      "SELECT * FROM users WHERE id=? AND role='admin'",
+      targetId,
+    );
+    if (!target) fail(404, "Administrator account not found.");
+    run("UPDATE users SET password_hash=? WHERE id=?", digest, targetId);
+    run("DELETE FROM sessions WHERE user_id=?", targetId);
+    if (target.phone) {
+      run("DELETE FROM otp_requests WHERE phone=?", target.phone);
+      run("DELETE FROM rate_limits WHERE key=?", "login:" + target.phone);
+    }
+    audit(actorId, "admin.password_reset", targetId);
+  }).immediate();
+  return c.json({ success: true });
+});
+apiApp.patch("/admin/contact-details", async (c) => {
+  const contact = z
+    .object({
+      email: z.union([z.email(), z.literal("")]).transform((v) => v.trim()),
+      phone: z
+        .string()
+        .trim()
+        .max(40)
+        .regex(/^[+\d() .-]*$/),
+      address: z.string().trim().max(500),
+      hours: z.string().trim().max(200),
+    })
+    .parse(await c.req.json());
+  run(
+    "INSERT INTO settings(key,value) VALUES('contact_details',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify(contact),
+  );
+  audit(c.get("user").id, "contact_details.updated", "contact_details");
+  return c.json({ contact });
 });
 apiApp.get("/admin/lists", (c) =>
   c.json({

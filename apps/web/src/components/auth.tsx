@@ -14,6 +14,7 @@ import { motion } from "framer-motion";
 import { Button, Input, Field } from "@ndc/ui";
 import { api, post } from "../lib/api";
 import { logoUrl } from "../lib/brand";
+import { ContactUs } from "./contact-us";
 export function Auth({ mode = "login" }: { mode?: string }) {
   const admin = mode === "admin/login",
     signup = mode === "signup",
@@ -70,12 +71,17 @@ export function Auth({ mode = "login" }: { mode?: string }) {
   }
   return (
     <main className="auth-page">
-      <a href="/login" className="auth-brand">
-        <img src={logoUrl} alt="NDC" />
-        <span>
-          connect<span className="brand-dot">.</span>
-        </span>
-      </a>
+      <header className="auth-header">
+        <a href="/login" className="auth-brand">
+          <img src={logoUrl} alt="NDC" />
+          <span>
+            connect<span className="brand-dot">.</span>
+          </span>
+        </a>
+        <p className="auth-tagline">
+          Engage Your Voters with Voice Message &amp; Bulk SMS
+        </p>
+      </header>
       <div className="auth-card">
         <motion.section
           initial={{ opacity: 0, y: 12 }}
@@ -327,7 +333,9 @@ export function Auth({ mode = "login" }: { mode?: string }) {
       </div>
       <footer className="auth-footer">
         NDC Connect <span>Building connections. Moving forward together.</span>
-        <span>© {new Date().getFullYear()}</span>
+        <span className="footer-contact">
+          © {new Date().getFullYear()} <ContactUs />
+        </span>
       </footer>
     </main>
   );

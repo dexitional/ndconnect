@@ -32,6 +32,8 @@ test("member signs in, imports contacts, sends SMS and voice, and uses shared le
     page.getByRole("heading", { name: "Neighborhood team" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Manage contacts" }).click();
+  await expect(page.getByLabel("Contact phone number")).toBeVisible();
+  await page.getByRole("button", { name: "Upload CSV", exact: true }).click();
   await page.getByLabel("Contact CSV").setInputFiles({
     name: "contacts.csv",
     mimeType: "text/csv",
@@ -39,7 +41,6 @@ test("member signs in, imports contacts, sends SMS and voice, and uses shared le
       "name,phone\nAma,0245559101\nKojo,0245559102\nDuplicate,+233245559101\nInvalid,nope",
     ),
   });
-  await page.getByRole("checkbox").check();
   await page
     .getByRole("button", { name: "Import contacts", exact: true })
     .click();
@@ -49,7 +50,6 @@ test("member signs in, imports contacts, sends SMS and voice, and uses shared le
   await page.getByRole("button", { name: "Add contact", exact: true }).click();
   await page.getByLabel("Contact name", { exact: true }).fill("Esi Addo");
   await page.getByLabel("Contact phone number").fill("0245559103");
-  await page.getByRole("dialog").getByRole("checkbox").check();
   await page.screenshot({
     path: "test-results/add-contact.png",
     fullPage: true,
@@ -66,7 +66,6 @@ test("member signs in, imports contacts, sends SMS and voice, and uses shared le
     page.getByRole("cell", { name: "Ama", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Contact phone number").fill("+233245559103");
-  await page.getByRole("dialog").getByRole("checkbox").check();
   await page.getByRole("button", { name: "Save contact", exact: true }).click();
   await expect(
     page.getByText("This phone number is already in this list."),
@@ -77,7 +76,6 @@ test("member signs in, imports contacts, sends SMS and voice, and uses shared le
     mimeType: "text/csv",
     buffer: Buffer.from("name,phone\nDuplicate,0245559103\nYaw,0245559104"),
   });
-  await page.getByRole("dialog").getByRole("checkbox").check();
   await page
     .getByRole("button", { name: "Import contacts", exact: true })
     .click();
@@ -565,4 +563,159 @@ test("member requests a Sender ID, admin confirms gateway registration, and appr
   } finally {
     await context.close();
   }
+});
+
+test("contact settings, footer popup, and attached audience tools work across desktop and mobile", async ({
+  page,
+}) => {
+  await page.goto("/admin/login");
+  await page.getByLabel("Phone number").fill("0245559001");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Gateway settings", exact: true })
+    .click();
+  await page.getByLabel("Contact email").fill("support@example.com");
+  await page
+    .getByLabel("Contact phone", { exact: true })
+    .fill("+233 24 123 4567");
+  await page.getByLabel("Contact address").fill("Accra office");
+  await page.getByLabel("Office hours").fill("Monday–Friday, 9am–5pm");
+  await page.getByRole("button", { name: "Save contact details" }).click();
+  await expect(
+    page.getByText("Contact details saved.", { exact: true }),
+  ).toBeVisible();
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await expect(
+    page.getByText("Engage Your Voters with Voice Message & Bulk SMS"),
+  ).toBeVisible();
+  const header = await page.locator(".auth-header").boundingBox();
+  const card = await page.locator(".auth-card").boundingBox();
+  expect(header!.width).toBe(card!.width);
+  expect(header!.x).toBe(card!.x);
+  await page.getByRole("button", { name: "Contact us", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "support@example.com" }),
+  ).toHaveAttribute("href", "mailto:support@example.com");
+  await expect(page.getByText("Accra office", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await expect(page.locator(".auth-form")).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    animations: "disabled",
+    path: "test-results/connect-login-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByText("Engage Your Voters with Voice Message & Bulk SMS"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  const mobileHeader = await page.locator(".auth-header").boundingBox();
+  const mobileCard = await page.locator(".auth-card").boundingBox();
+  expect(mobileHeader!.width).toBe(mobileCard!.width);
+  await page.screenshot({
+    path: "test-results/connect-login-mobile.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByLabel("Phone number").fill("0245559002");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("link", { name: "My contacts", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New contact list", exact: true })
+    .click();
+  await page.getByLabel("List name").fill("Message button audience");
+  await page
+    .getByRole("button", { name: "Create contact list", exact: true })
+    .click();
+
+  await page
+    .getByRole("article")
+    .filter({ hasText: "Message button audience" })
+    .getByRole("link", { name: "Send message" })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: /Message button audience/ }),
+  ).toBeChecked();
+  await page.getByLabel("Campaign name").fill("Audience workflow draft");
+  await page
+    .getByLabel("Your message")
+    .fill("Keep this message while editing contacts.");
+  await page
+    .getByRole("button", { name: "New contact list", exact: true })
+    .click();
+  await page.getByLabel("List name").fill("Campaign volunteers");
+  await page
+    .getByRole("button", { name: "Create contact list", exact: true })
+    .click();
+  await expect(page.getByLabel("Contact phone number")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("checkbox")).toHaveCount(0);
+  await page.getByLabel("Contact name", { exact: true }).fill("New volunteer");
+  await page.getByLabel("Contact phone number").fill("0245559123");
+  await page.getByRole("button", { name: "Save contact", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Contacts (1)", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: /Campaign volunteers/ }),
+  ).toBeChecked();
+  await page
+    .getByRole("button", { name: "Edit Campaign volunteers", exact: true })
+    .click();
+  await page.getByText("Edit list details", { exact: true }).click();
+  await page.getByLabel("List name").fill("Updated volunteers");
+  await page
+    .getByRole("button", { name: "Save list details", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("heading", { name: "Updated volunteers", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await page
+    .getByRole("button", {
+      name: "Remove Updated volunteers from campaign",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: /Updated volunteers/ }),
+  ).not.toBeChecked();
+  await expect(page.getByLabel("Your message")).toHaveValue(
+    "Keep this message while editing contacts.",
+  );
+  await expect(page.getByLabel("Campaign name")).toHaveValue(
+    "Audience workflow draft",
+  );
+  await page.screenshot({
+    path: "test-results/connect-audience-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    animations: "disabled",
+    path: "test-results/connect-audience-mobile.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Contact us", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "support@example.com" }),
+  ).toBeVisible();
 });

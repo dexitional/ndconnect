@@ -13,7 +13,7 @@ import {
   Trash2,
   Download,
   Check,
-  FileSpreadsheet,
+  Send,
 } from "lucide-react";
 import { Button, Input, Textarea, Select, Field, Dialog, Badge } from "@ndc/ui";
 import { api, post, patch, remove, type Row } from "../lib/api";
@@ -27,21 +27,6 @@ export function Contacts() {
   const [deleteList, setDeleteList] = useState<Row | null>(null);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
-  async function createList(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    setBusy(true);
-    try {
-      await post("/lists", Object.fromEntries(f));
-      setCreate(false);
-      await client.invalidateQueries({ queryKey: ["lists"] });
-      toast.success("Contact list created. Add your contacts to get started.");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   if (q.isLoading) return <Loading />;
   if (q.isError)
     return <QueryError error={q.error} retry={() => void q.refetch()} />;
@@ -106,6 +91,11 @@ export function Contacts() {
               <Button variant="ghost" onClick={() => setSelected(l)}>
                 Manage contacts <ArrowUpRight size={15} />
               </Button>
+              <Button variant="outline" size="sm" asChild>
+                <a href={`/compose?list=${encodeURIComponent(l.id)}`}>
+                  <Send size={15} /> Send message
+                </a>
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -132,51 +122,7 @@ export function Contacts() {
           />
         </section>
       )}
-      <Dialog
-        open={create}
-        onOpenChange={setCreate}
-        title="A new home for your contacts"
-        description="Keep a list private or share it with your community."
-      >
-        <form onSubmit={createList}>
-          <Field label="List name">
-            <Input
-              name="name"
-              required
-              minLength={2}
-              maxLength={100}
-              placeholder="e.g. Community volunteers"
-            />
-          </Field>
-          <Field label="Description">
-            <Textarea
-              name="description"
-              maxLength={500}
-              placeholder="A little about this community…"
-            />
-          </Field>
-          <div className="form-grid">
-            <Field label="Category">
-              <Select name="category">
-                <option>General</option>
-                <option>Community</option>
-                <option>Volunteers</option>
-                <option>Events</option>
-                <option>Partners</option>
-              </Select>
-            </Field>
-            <Field label="Visibility">
-              <Select name="visibility">
-                <option value="private">Private · only you</option>
-                <option value="shared">Shared · requires approval</option>
-              </Select>
-            </Field>
-          </div>
-          <Button className="full" busy={busy}>
-            Create contact list
-          </Button>
-        </form>
-      </Dialog>
+      {create && <CreateContactList close={() => setCreate(false)} />}
       <Dialog
         open={!!deleteList}
         onOpenChange={() => setDeleteList(null)}
@@ -209,9 +155,92 @@ export function Contacts() {
         </div>
       </Dialog>
       {selected && (
-        <ContactManager list={selected} close={() => setSelected(null)} />
+        <ContactManager
+          list={
+            q.data.lists.find((list: Row) => list.id === selected.id) ||
+            selected
+          }
+          close={() => setSelected(null)}
+        />
       )}
     </>
+  );
+}
+export function CreateContactList({
+  close,
+  onCreated,
+}: {
+  close: () => void;
+  onCreated?: (list: Row) => void;
+}) {
+  const client = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function createList(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setBusy(true);
+    try {
+      const values = Object.fromEntries(f);
+      const result = await post("/lists", values);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["lists"] }),
+        client.invalidateQueries({ queryKey: ["compose-lists"] }),
+      ]);
+      close();
+      onCreated?.({ ...values, id: result.id, contact_count: 0 });
+      toast.success("Contact list created. Add your contacts to get started.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog
+      open
+      onOpenChange={close}
+      title="A new home for your contacts"
+      description="Keep a list private or share it with your community."
+    >
+      <form onSubmit={createList}>
+        <Field label="List name">
+          <Input
+            name="name"
+            required
+            minLength={2}
+            maxLength={100}
+            placeholder="e.g. Community volunteers"
+          />
+        </Field>
+        <Field label="Description">
+          <Textarea
+            name="description"
+            maxLength={500}
+            placeholder="A little about this community…"
+          />
+        </Field>
+        <div className="form-grid">
+          <Field label="Category">
+            <Select name="category">
+              <option>General</option>
+              <option>Community</option>
+              <option>Volunteers</option>
+              <option>Events</option>
+              <option>Partners</option>
+            </Select>
+          </Field>
+          <Field label="Visibility">
+            <Select name="visibility">
+              <option value="private">Private · only you</option>
+              <option value="shared">Shared · requires approval</option>
+            </Select>
+          </Field>
+        </div>
+        <Button className="full" busy={busy}>
+          Create contact list
+        </Button>
+      </form>
+    </Dialog>
   );
 }
 export function ContactManager({
@@ -225,7 +254,7 @@ export function ContactManager({
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Row | null>(null);
-  const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
+  const [entryMode, setEntryMode] = useState<"upload" | "manual">("manual");
   const q = useQuery({
     queryKey: ["contacts", list.id, page],
     queryFn: () => api(`/lists/${list.id}/contacts?page=${page}`),
@@ -249,7 +278,6 @@ export function ContactManager({
       await post(`/lists/${list.id}/contacts`, {
         name: data.get("name"),
         phone: data.get("phone"),
-        consent: data.get("consent") === "true",
       });
       form.reset();
       setPage(0);
@@ -285,22 +313,56 @@ export function ContactManager({
       title={list.name}
       description="Add contacts individually or upload another CSV. Your existing contacts stay in this list."
     >
+      <details className="contact-list-details">
+        <summary>Edit list details</summary>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            try {
+              await patch(
+                `/lists/${list.id}`,
+                Object.fromEntries(new FormData(e.currentTarget)),
+              );
+              await refreshContacts();
+              toast.success("List details updated.");
+            } catch (error) {
+              toast.error((error as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Field label="List name">
+            <Input
+              name="name"
+              defaultValue={list.name}
+              required
+              minLength={2}
+              maxLength={100}
+            />
+          </Field>
+          <Field label="Description">
+            <Textarea
+              name="description"
+              defaultValue={list.description}
+              maxLength={500}
+            />
+          </Field>
+          <Field label="Category">
+            <Input
+              name="category"
+              defaultValue={list.category}
+              maxLength={50}
+            />
+          </Field>
+          <Button busy={busy}>Save list details</Button>
+        </form>
+      </details>
       <div
         className="segmented contact-entry-mode"
         aria-label="How to add contacts"
       >
-        <button
-          type="button"
-          aria-pressed={entryMode === "upload"}
-          className={entryMode === "upload" ? "selected" : ""}
-          disabled={busy}
-          onClick={() => {
-            setEntryMode("upload");
-            setResult(null);
-          }}
-        >
-          Upload CSV
-        </button>
         <button
           type="button"
           aria-pressed={entryMode === "manual"}
@@ -312,6 +374,18 @@ export function ContactManager({
           }}
         >
           Add contact
+        </button>
+        <button
+          type="button"
+          aria-pressed={entryMode === "upload"}
+          className={entryMode === "upload" ? "selected" : ""}
+          disabled={busy}
+          onClick={() => {
+            setEntryMode("upload");
+            setResult(null);
+          }}
+        >
+          Upload CSV
         </button>
       </div>
       {entryMode === "manual" ? (
@@ -337,17 +411,6 @@ export function ContactManager({
               disabled={busy}
             />
           </Field>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              name="consent"
-              value="true"
-              required
-              disabled={busy}
-            />{" "}
-            I have permission to contact this person and to share their details
-            if this list is shared.
-          </label>
           <Button type="submit" busy={busy} className="full">
             <Plus size={16} /> Save contact
           </Button>
@@ -377,11 +440,6 @@ export function ContactManager({
           >
             <Download size={14} /> Download CSV template
           </a>
-          <label className="checkbox-label">
-            <input type="checkbox" name="consent" value="true" required /> I
-            have permission to contact these people and to share their details
-            if this list is shared.
-          </label>
           <Button busy={busy} className="full">
             <Upload size={16} /> Import contacts
           </Button>
@@ -419,7 +477,7 @@ export function ContactManager({
                 visibility:
                   list.visibility === "private" ? "shared" : "private",
               });
-              void client.invalidateQueries({ queryKey: ["lists"] });
+              await refreshContacts();
               toast.success(
                 list.visibility === "private"
                   ? "List submitted for sharing."
@@ -461,12 +519,7 @@ export function ContactManager({
                       onClick={async () => {
                         try {
                           await remove(`/lists/${list.id}/contacts/${r.id}`);
-                          void client.invalidateQueries({
-                            queryKey: ["contacts", list.id],
-                          });
-                          void client.invalidateQueries({
-                            queryKey: ["lists"],
-                          });
+                          await refreshContacts();
                         } catch (e) {
                           toast.error((e as Error).message);
                         }
