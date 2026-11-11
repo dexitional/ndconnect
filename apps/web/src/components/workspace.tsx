@@ -149,7 +149,7 @@ const navUser = [
   { href: "/campaigns", label: "Campaigns", icon: Send },
   { href: "/contacts", label: "My contacts", icon: Users },
   { href: "/leads", label: "Shared leads", icon: Library },
-  { href: "/credits", label: "Voice credits", icon: CreditCard },
+  { href: "/credits", label: "SMS & voice credits", icon: CreditCard },
 ];
 const navAdmin = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },

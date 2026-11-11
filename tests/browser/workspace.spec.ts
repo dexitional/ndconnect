@@ -246,9 +246,11 @@ test("member submits Mobile Money details, admin gets notified and approves voic
     .getByLabel("Password", { exact: true })
     .fill("Browser-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("link", { name: "Voice credits", exact: true }).click();
+  await page
+    .getByRole("link", { name: "SMS & voice credits", exact: true })
+    .click();
   await expect(
-    page.getByRole("heading", { name: "Voice credits", exact: true }),
+    page.getByRole("heading", { name: "SMS & voice credits", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("0558641826", { exact: true })).toBeVisible();
   await expect(
@@ -277,7 +279,9 @@ test("member submits Mobile Money details, admin gets notified and approves voic
   await expect(
     page.getByRole("cell", { name: "pending", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("0 purchased credits available")).toBeVisible();
+  await expect(
+    page.getByText(/SMS credits · 0 voice credits available/),
+  ).toBeVisible();
   await expect(page.locator(".content")).toHaveCSS("opacity", "1");
   await page.screenshot({
     path: "test-results/voice-credits.png",
@@ -311,6 +315,7 @@ test("member submits Mobile Money details, admin gets notified and approves voic
     await review
       .getByLabel("Review note / rejection reason")
       .fill("Confirmed test payment.");
+    await expect(review).toHaveCSS("opacity", "1");
     await adminPage.screenshot({
       path: "test-results/payment-review.png",
       fullPage: true,
@@ -331,7 +336,7 @@ test("member submits Mobile Money details, admin gets notified and approves voic
     await expect(adminPage.getByText("Payment settings saved.")).toBeVisible();
     await page.reload();
     await expect(
-      page.getByText("25 purchased credits available"),
+      page.getByText(/SMS credits · 25 voice credits available/),
     ).toBeVisible();
     await expect(
       page.getByText("GHC 0.55 per credit", { exact: true }),
@@ -349,6 +354,51 @@ test("member submits Mobile Money details, admin gets notified and approves voic
       page.getByText("Voice credits added", { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Close dialog" }).click();
+    await page.getByLabel("Credit type").selectOption("sms");
+    await page.getByLabel("Number of SMS credits").fill("100");
+    await expect(
+      page.getByText("GHC 0.06 per credit", { exact: true }),
+    ).toBeVisible();
+    const beforeSms = await (
+      await page.request.get("/api/billing/settings")
+    ).json();
+    await page.getByRole("button", { name: "Create payment request" }).click();
+    await expect(
+      page.getByRole("dialog").getByText("GHC 6.00", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByLabel("Mobile Money transaction ID")
+      .fill("BROWSER-SMS-123456");
+    await page.getByLabel("Payer name", { exact: true }).fill("Ama Mensah");
+    await page.getByLabel("Payer phone number").fill("0245559002");
+    await page
+      .getByRole("button", { name: "Submit payment for confirmation" })
+      .click();
+    await expect(
+      page.getByRole("cell", { name: "BROWSER-SMS-123456", exact: true }),
+    ).toBeVisible();
+    await adminPage.goto("http://127.0.0.1:3111/admin/payments");
+    await adminPage
+      .getByRole("row")
+      .filter({ hasText: "BROWSER-SMS-123456" })
+      .getByRole("button", { name: "Review payment" })
+      .click();
+    await adminPage
+      .getByRole("button", { name: "Confirm payment & add 100 credits" })
+      .click();
+    await expect(
+      adminPage.getByText("Payment approved. SMS credits added."),
+    ).toBeVisible();
+    await page.reload();
+    const afterSms = await (
+      await page.request.get("/api/billing/settings")
+    ).json();
+    expect(afterSms.smsCredits).toBe(beforeSms.smsCredits + 100);
+    expect(afterSms.voiceCredits).toBe(beforeSms.voiceCredits);
+    await expect(
+      page.getByRole("heading", { name: "SMS & voice credits", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".content")).toHaveCSS("opacity", "1");
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page.evaluate(
@@ -362,4 +412,53 @@ test("member submits Mobile Money details, admin gets notified and approves voic
   } finally {
     await adminContext.close();
   }
+});
+
+test("failed campaigns retry and completed campaigns create a suffixed copy for another broadcast", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Phone number").fill("0245559002");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("link", { name: "Campaigns", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Retry browser fixture", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Retry failed recipients" }).click();
+  await expect(
+    page.getByText("Retry failed recipients?", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Confirm retry", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByText("completed", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Clone and resend" }).click();
+  await expect(
+    page.getByRole("dialog").getByRole("heading", {
+      name: "Retry browser fixture - Copy 1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("draft", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Send campaign", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm and queue", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByText("completed", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await page.screenshot({
+    path: "test-results/campaign-copy.png",
+    fullPage: true,
+    animations: "disabled",
+  });
 });

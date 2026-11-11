@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { replayReceipts } from "./webhooks";
 import { billingRoutes } from "./billing";
-import { refundRecipients } from "./credits";
+import { refundRecipients, reserveCredits } from "./credits";
 import { audioMime } from "./audio";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile, readFile, unlink, stat, chown } from "node:fs/promises";
 import { resolve } from "node:path";
 import { db, all, one, run, audit, uploadDir, type Row } from "@ndc/db";
-import { normalizePhone, smsParts } from "../lib/shared";
+import { normalizePhone } from "../lib/shared";
 import {
   currentUser,
   publicUser,
@@ -821,45 +821,11 @@ apiApp.post("/campaigns/:id/queue", (c) => {
       fail(400, "No eligible contacts in the selected lists.");
     if (contacts.length > 100000)
       fail(400, "Select at most 100,000 recipients per campaign.");
-    const units =
-      contacts.length *
-      (campaign.channel === "sms" ? smsParts(campaign.message).parts : 1);
-    const balance = one(
-      "SELECT voice_credits FROM users WHERE id=?",
-      campaign.owner_id,
-    )!;
-    const voiceUnits =
-      campaign.channel === "voice"
-        ? Math.min(contacts.length, balance.voice_credits)
-        : 0;
-    const allowanceUnits = units - voiceUnits;
-    if (
-      !run(
-        "UPDATE users SET allowance=allowance-?,voice_credits=voice_credits-? WHERE id=? AND allowance>=? AND voice_credits>=?",
-        allowanceUnits,
-        voiceUnits,
-        campaign.owner_id,
-        allowanceUnits,
-        voiceUnits,
-      ).changes
-    )
-      fail(
-        400,
-        campaign.channel === "voice"
-          ? `This campaign needs ${units} voice credits or send units. Buy voice credits or ask an administrator for allowance.`
-          : `This campaign needs ${units} send units. Ask an administrator to increase your allowance.`,
-      );
+    const source = reserveCredits(campaign, contacts.length);
     const insert = db.prepare(
       "INSERT INTO deliveries(id,campaign_id,phone,credit_source) VALUES(?,?,?,?)",
     );
-    contacts.forEach((r, index) =>
-      insert.run(
-        id(),
-        campaign.id,
-        r.phone,
-        index < voiceUnits ? "voice" : "allowance",
-      ),
-    );
+    contacts.forEach((r) => insert.run(id(), campaign.id, r.phone, source));
     run(
       "UPDATE campaigns SET status=?,queued_at=CURRENT_TIMESTAMP WHERE id=?",
       campaign.scheduled_at && campaign.scheduled_at > Date.now()
@@ -902,6 +868,119 @@ apiApp.post("/campaigns/:id/resume", (c) => {
     );
   }).immediate();
   return c.json({ success: true });
+});
+apiApp.post("/campaigns/:id/retry", (c) => {
+  const user = c.get("user");
+  db.transaction(() => {
+    const campaign = ownedCampaign(c.req.param("id"), user);
+    if (
+      !["attention", "failed", "rejected", "completed"].includes(
+        campaign.status,
+      )
+    )
+      fail(
+        409,
+        "Only finished or paused campaigns with failed recipients can be retried.",
+      );
+    assertProvider(campaign.provider);
+    accessibleLists(JSON.parse(campaign.list_ids), {
+      ...user,
+      id: campaign.owner_id,
+    });
+    if (
+      one("SELECT status FROM users WHERE id=?", campaign.owner_id)?.status !==
+      "active"
+    )
+      fail(403, "The campaign owner is suspended.");
+    const failed = all(
+      "SELECT * FROM deliveries WHERE campaign_id=? AND status IN ('failed','rejected') AND phone NOT IN (SELECT phone FROM suppressions)",
+      campaign.id,
+    );
+    if (!failed.length)
+      fail(
+        409,
+        "There are no eligible failed or rejected recipients to retry. Unknown results must be reconciled first.",
+      );
+    const source = reserveCredits(campaign, failed.length);
+    for (const row of failed) {
+      run(
+        "INSERT INTO delivery_attempts(id,delivery_id,campaign_id,phone,status,provider_id,error,credit_source,attempted_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        id(),
+        row.id,
+        campaign.id,
+        row.phone,
+        row.status,
+        row.provider_id,
+        row.error,
+        row.credit_source,
+        row.updated_at,
+      );
+      run(
+        "UPDATE deliveries SET status='pending',provider_id=NULL,error=NULL,credit_source=?,report_checked_at=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        source,
+        row.id,
+      );
+    }
+    run(
+      "UPDATE campaigns SET status='queued',scheduled_at=NULL,error=NULL,lease_until=NULL,lease_token=NULL,queued_at=CURRENT_TIMESTAMP WHERE id=?",
+      campaign.id,
+    );
+    audit(
+      user.id,
+      "campaign.retried",
+      campaign.id,
+      `${failed.length} failed recipients; new ${campaign.channel} credits reserved. Existing unsent recipients keep their reservation.`,
+    );
+  }).immediate();
+  return c.json({ success: true });
+});
+apiApp.post("/campaigns/:id/clone", (c) => {
+  const user = c.get("user");
+  const campaignId = id();
+  db.transaction(() => {
+    const original = ownedCampaign(c.req.param("id"), user);
+    if (original.status !== "completed")
+      fail(
+        409,
+        "Only completed campaigns can be copied for another broadcast.",
+      );
+    accessibleLists(JSON.parse(original.list_ids), {
+      ...user,
+      id: original.owner_id,
+    });
+    let copy = 1;
+    let name = "";
+    do {
+      name = original.name.slice(0, 100) + ` - Copy ${copy++}`;
+    } while (
+      one(
+        "SELECT id FROM campaigns WHERE owner_id=? AND name=?",
+        original.owner_id,
+        name,
+      )
+    );
+    const provider = activeProvider();
+    run(
+      "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,audio_id,list_ids,provider,source_campaign_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      campaignId,
+      original.owner_id,
+      name,
+      original.channel,
+      original.message,
+      providerSender(provider, original.channel),
+      original.audio_id,
+      original.list_ids,
+      provider,
+      original.id,
+    );
+    audit(
+      user.id,
+      "campaign.cloned",
+      campaignId,
+      `Copied from ${original.id}; awaiting send confirmation.`,
+    );
+  }).immediate();
+  return c.json({ id: campaignId }, 201);
 });
 apiApp.post("/campaigns/:id/cancel", (c) => {
   const campaign = ownedCampaign(c.req.param("id"), c.get("user"));
@@ -971,6 +1050,7 @@ apiApp.patch("/admin/users/:id", async (c) => {
     .object({
       status: z.enum(["active", "suspended"]).optional(),
       grant: z.number().int().min(1).max(1000000).optional(),
+      creditType: z.enum(["sms", "voice"]).default("sms"),
     })
     .parse(await c.req.json());
   const target = one("SELECT * FROM users WHERE id=?", c.req.param("id"));
@@ -985,7 +1065,7 @@ apiApp.patch("/admin/users/:id", async (c) => {
     }
     if (b.grant)
       run(
-        "UPDATE users SET allowance=allowance+? WHERE id=?",
+        `UPDATE users SET ${b.creditType === "voice" ? "voice_credits=voice_credits" : "allowance=allowance"}+? WHERE id=?`,
         b.grant,
         target.id,
       );

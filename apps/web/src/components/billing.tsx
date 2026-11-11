@@ -21,7 +21,7 @@ function PaymentSummary({ order }: { order: Row }) {
   return (
     <div className="payment-summary">
       <div>
-        <span>Voice credits</span>
+        <span>{order.credit_type === "sms" ? "SMS" : "Voice"} credits</span>
         <strong>{number(order.credits)}</strong>
       </div>
       <div>
@@ -60,6 +60,7 @@ export function VoiceCredits({ user }: { user: Row }) {
     refetchInterval: 10000,
   });
   const [credits, setCredits] = useState(25);
+  const [creditType, setCreditType] = useState("voice");
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(
@@ -78,6 +79,9 @@ export function VoiceCredits({ user }: { user: Row }) {
       />
     );
   const config = settings.data.settings;
+  const label = creditType === "sms" ? "SMS" : "voice";
+  const rate =
+    creditType === "sms" ? config.smsRatePesewas : config.ratePesewas;
   const selected = orders.data.orders.find((row: Row) => row.id === selectedId);
   async function refresh() {
     await Promise.all([
@@ -90,7 +94,7 @@ export function VoiceCredits({ user }: { user: Row }) {
     <>
       <PageHeading
         eyebrow="KEEP THE CONVERSATION GOING"
-        title="Voice credits"
+        title="SMS & voice credits"
         description="Pay with Mobile Money, submit your transaction details, and receive credits after administrator confirmation."
       />
       <div className="settings-grid payment-overview">
@@ -100,22 +104,27 @@ export function VoiceCredits({ user }: { user: Row }) {
               <CreditCard size={22} />
             </span>
             <div>
-              <h3>Buy voice credits</h3>
+              <h3>Buy {label} credits</h3>
               <p>
-                {number(settings.data.voiceCredits)} purchased credits available
+                {number(settings.data.smsCredits)} SMS credits ·{" "}
+                {number(settings.data.voiceCredits)} voice credits available
               </p>
             </div>
           </div>
           <p className="notice">
-            One voice recipient uses one credit. Purchased credits are used
-            before your general send allowance and cannot be spent on SMS.
+            SMS credits pay for text messages only: one credit per SMS part per
+            recipient. Voice credits pay for voice campaigns only: one credit
+            per recipient.
           </p>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
               setBusy(true);
               try {
-                const result = await post("/billing/orders", { credits });
+                const result = await post("/billing/orders", {
+                  credits,
+                  creditType,
+                });
                 await refresh();
                 setSelectedId(result.order.id);
               } catch (error) {
@@ -125,7 +134,16 @@ export function VoiceCredits({ user }: { user: Row }) {
               }
             }}
           >
-            <Field label="Number of voice credits">
+            <Field label="Credit type">
+              <Select
+                value={creditType}
+                onChange={(e) => setCreditType(e.target.value)}
+              >
+                <option value="sms">SMS credits — text broadcasts</option>
+                <option value="voice">Voice credits — voice broadcasts</option>
+              </Select>
+            </Field>
+            <Field label={`Number of ${label} credits`}>
               <Input
                 type="number"
                 min={1}
@@ -137,11 +155,9 @@ export function VoiceCredits({ user }: { user: Row }) {
               />
             </Field>
             <div className="payment-price">
-              <span>{money(config.ratePesewas)} per credit</span>
+              <span>{money(rate)} per credit</span>
               <strong>
-                {money(
-                  config.ratePesewas * (Number.isFinite(credits) ? credits : 0),
-                )}
+                {money(rate * (Number.isFinite(credits) ? credits : 0))}
               </strong>
             </div>
             <Button busy={busy} className="full">
@@ -208,7 +224,10 @@ export function VoiceCredits({ user }: { user: Row }) {
                 {orders.data.orders.map((order: Row) => (
                   <tr key={order.id}>
                     <td>{when(order.created_at)}</td>
-                    <td>{number(order.credits)}</td>
+                    <td>
+                      {number(order.credits)}{" "}
+                      {order.credit_type === "sms" ? "SMS" : "voice"}
+                    </td>
                     <td>{money(order.total_pesewas)}</td>
                     <td>{order.transaction_id || "Not submitted"}</td>
                     <td>
@@ -233,7 +252,7 @@ export function VoiceCredits({ user }: { user: Row }) {
         ) : (
           <Empty
             icon={CreditCard}
-            title="Your first voice credits"
+            title="Your first credit purchase"
             description="Create a payment request above to get started."
           />
         )}
@@ -242,7 +261,7 @@ export function VoiceCredits({ user }: { user: Row }) {
         <Dialog
           open
           onOpenChange={() => setSelectedId(null)}
-          title="Voice credit payment"
+          title={`${selected.credit_type === "sms" ? "SMS" : "Voice"} credit payment`}
           description="Use the payment destination and amount saved with this request."
         >
           <Status value={selected.status} />
@@ -252,8 +271,9 @@ export function VoiceCredits({ user }: { user: Row }) {
           )}
           {selected.status === "approved" ? (
             <p className="notice">
-              {number(selected.credits)} voice credits were added on{" "}
-              {when(selected.reviewed_at)}. Transaction:{" "}
+              {number(selected.credits)}{" "}
+              {selected.credit_type === "sms" ? "SMS" : "voice"} credits were
+              added on {when(selected.reviewed_at)}. Transaction:{" "}
               {selected.transaction_id}.
             </p>
           ) : (
@@ -409,7 +429,7 @@ export function AdminPayments() {
       await client.invalidateQueries({ queryKey: ["notifications"] });
       toast.success(
         decision === "approved"
-          ? "Payment approved. Voice credits added."
+          ? `Payment approved. ${selected.credit_type === "sms" ? "SMS" : "Voice"} credits added.`
           : "Payment rejected. The user has been notified.",
       );
     } catch (error) {
@@ -427,7 +447,7 @@ export function AdminPayments() {
       <PageHeading
         eyebrow="REVIEW, CONFIRM, CREDIT"
         title="Mobile Money payments"
-        description="Confirm received payments before adding voice credits to member accounts."
+        description="Confirm received payments before adding SMS or voice credits to member accounts."
       >
         <Button variant="outline" onClick={() => setSettingsOpen(true)}>
           Payment settings
@@ -438,7 +458,8 @@ export function AdminPayments() {
           {q.data.pending} awaiting confirmation
         </Badge>
         <span>
-          Rate: <strong>{money(config.ratePesewas)} / credit</strong>
+          Voice: <strong>{money(config.ratePesewas)} / credit</strong> · SMS:{" "}
+          <strong>{money(config.smsRatePesewas)} / credit</strong>
         </span>
         <span>
           Receive at <strong>{config.phone}</strong> · {config.name}
@@ -480,7 +501,10 @@ export function AdminPayments() {
                     </td>
                     <td>{p.transaction_id}</td>
                     <td>{money(p.total_pesewas)}</td>
-                    <td>{number(p.credits)}</td>
+                    <td>
+                      {number(p.credits)}{" "}
+                      {p.credit_type === "sms" ? "SMS" : "voice"}
+                    </td>
                     <td>
                       <Status value={p.status} />
                     </td>
@@ -511,11 +535,11 @@ export function AdminPayments() {
       <Dialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        title="Voice credit payment settings"
+        title="Credit payment settings"
         description="Changes apply to new requests. Existing requests keep their quoted rate and payment destination."
       >
         <form
-          key={`${settingsOpen}:${config.ratePesewas}:${config.phone}:${config.name}`}
+          key={`${settingsOpen}:${config.ratePesewas}:${config.smsRatePesewas}:${config.phone}:${config.name}`}
           onSubmit={async (e) => {
             e.preventDefault();
             const values = Object.fromEntries(new FormData(e.currentTarget));
@@ -544,6 +568,17 @@ export function AdminPayments() {
               step="0.01"
               required
               defaultValue={(config.ratePesewas / 100).toFixed(2)}
+            />
+          </Field>
+          <Field label="Price per SMS credit (GHC)">
+            <Input
+              name="smsRate"
+              type="number"
+              min="0.01"
+              max="1000"
+              step="0.01"
+              required
+              defaultValue={(config.smsRatePesewas / 100).toFixed(2)}
             />
           </Field>
           <Field label="Mobile Money payment number">

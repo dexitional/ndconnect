@@ -35,11 +35,12 @@ const amount = z
 export function paymentSettings() {
   const values = Object.fromEntries(
     all(
-      "SELECT key,value FROM settings WHERE key IN ('voice_rate_pesewas','payment_phone','payment_name','payment_network')",
+      "SELECT key,value FROM settings WHERE key IN ('voice_rate_pesewas','sms_rate_pesewas','payment_phone','payment_name','payment_network')",
     ).map((row) => [row.key, row.value]),
   );
   return {
     ratePesewas: Number(values.voice_rate_pesewas),
+    smsRatePesewas: Number(values.sms_rate_pesewas),
     phone: values.payment_phone,
     name: values.payment_name,
     network: values.payment_network,
@@ -67,6 +68,8 @@ function ownedOrder(id: string, userId: string) {
 billingRoutes.get("/billing/settings", (c) =>
   c.json({
     settings: paymentSettings(),
+    smsCredits: one("SELECT allowance FROM users WHERE id=?", c.get("user").id)!
+      .allowance,
     voiceCredits: one(
       "SELECT voice_credits FROM users WHERE id=?",
       c.get("user").id,
@@ -82,8 +85,11 @@ billingRoutes.get("/billing/orders", (c) =>
   }),
 );
 billingRoutes.post("/billing/orders", async (c) => {
-  const { credits } = z
-    .object({ credits: z.number().int().min(1).max(100000) })
+  const { credits, creditType } = z
+    .object({
+      credits: z.number().int().min(1).max(100000),
+      creditType: z.enum(["sms", "voice"]).default("voice"),
+    })
     .parse(await c.req.json());
   const user = c.get("user");
   if (!rateLimit("payment-create:" + user.id, 20, 15 * 60000))
@@ -91,22 +97,25 @@ billingRoutes.post("/billing/orders", async (c) => {
   const id = crypto.randomUUID();
   db.transaction(() => {
     const settings = paymentSettings();
+    const rate =
+      creditType === "sms" ? settings.smsRatePesewas : settings.ratePesewas;
     run(
-      "INSERT INTO payment_requests(id,user_id,credits,rate_pesewas,total_pesewas,payment_phone,payment_name,payment_network) VALUES(?,?,?,?,?,?,?,?)",
+      "INSERT INTO payment_requests(id,user_id,credits,rate_pesewas,total_pesewas,payment_phone,payment_name,payment_network,credit_type) VALUES(?,?,?,?,?,?,?,?,?)",
       id,
       user.id,
       credits,
-      settings.ratePesewas,
-      credits * settings.ratePesewas,
+      rate,
+      credits * rate,
       settings.phone,
       settings.name,
       settings.network,
+      creditType,
     );
     audit(
       user.id,
       "payment.created",
       id,
-      `${credits} voice credits at ${money(settings.ratePesewas)} each`,
+      `${credits} ${creditType} credits at ${money(rate)} each`,
     );
   }).immediate();
   return c.json({ order: ownedOrder(id, user.id) }, 201);
@@ -179,14 +188,14 @@ billingRoutes.patch("/billing/orders/:id", async (c) => {
         order.status === "pending"
           ? "Payment details updated"
           : "Payment awaiting confirmation",
-        `${user.name} submitted ${money(order.total_pesewas)} for ${order.credits} voice credits.`,
+        `${user.name} submitted ${money(order.total_pesewas)} for ${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits.`,
         "/admin/payments?id=" + order.id,
       );
     audit(
       user.id,
       "payment.submitted",
       order.id,
-      `Revision ${order.version + 1}; ${order.credits} voice credits`,
+      `Revision ${order.version + 1}; ${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits`,
     );
   }).immediate();
   return c.json({ order: ownedOrder(c.req.param("id"), user.id) });
@@ -242,6 +251,7 @@ billingRoutes.patch("/admin/payment-settings", async (c) => {
   const body = z
     .object({
       rate: amount.pipe(z.number().int().min(1).max(100000)),
+      smsRate: amount.pipe(z.number().int().min(1).max(100000)).optional(),
       phone,
       name: z.string().trim().min(2).max(120),
       network: z.enum(["Mobile Money", "MTN MoMo", "Telecel Cash", "AT Money"]),
@@ -250,6 +260,7 @@ billingRoutes.patch("/admin/payment-settings", async (c) => {
   db.transaction(() => {
     for (const [key, value] of Object.entries({
       voice_rate_pesewas: body.rate,
+      ...(body.smsRate === undefined ? {} : { sms_rate_pesewas: body.smsRate }),
       payment_phone: body.phone,
       payment_name: body.name,
       payment_network: body.network,
@@ -295,14 +306,15 @@ billingRoutes.post("/admin/payments/:id/review", async (c) => {
       fail(400, "Payment details are incomplete or the amount does not match.");
     if (body.decision === "approved") {
       run(
-        "INSERT INTO voice_credit_purchases(id,payment_id,user_id,credits) VALUES(?,?,?,?)",
+        "INSERT INTO credit_purchases(id,payment_id,user_id,credits,credit_type) VALUES(?,?,?,?,?)",
         crypto.randomUUID(),
         order.id,
         order.user_id,
         order.credits,
+        order.credit_type,
       );
       run(
-        "UPDATE users SET voice_credits=voice_credits+? WHERE id=?",
+        `UPDATE users SET ${order.credit_type === "sms" ? "allowance=allowance" : "voice_credits=voice_credits"}+? WHERE id=?`,
         order.credits,
         order.user_id,
       );
@@ -317,10 +329,12 @@ billingRoutes.post("/admin/payments/:id/review", async (c) => {
     notify(
       order.user_id,
       body.decision === "approved"
-        ? "Voice credits added"
+        ? order.credit_type === "sms"
+          ? "SMS credits added"
+          : "Voice credits added"
         : "Payment needs attention",
       body.decision === "approved"
-        ? `${order.credits} voice credits have been added to your account.`
+        ? `${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits have been added to your account.`
         : body.note,
       "/credits?id=" + order.id,
     );
@@ -328,7 +342,7 @@ billingRoutes.post("/admin/payments/:id/review", async (c) => {
       admin.id,
       "payment." + body.decision,
       order.id,
-      `${order.credits} voice credits; ${money(order.total_pesewas)}; ${body.note}`,
+      `${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits; ${money(order.total_pesewas)}; ${body.note}`,
     );
   }).immediate();
   return c.json({ success: true });

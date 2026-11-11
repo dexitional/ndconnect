@@ -21,7 +21,7 @@ for (const [id, name, phone, role] of [
   [member, "Ama Mensah", "+233245559002", "user"],
 ])
   run(
-    "INSERT INTO users(id,name,phone,password_hash,role,verified,allowance) VALUES(?,?,?,?,?,1,10000)",
+    "INSERT INTO users(id,name,phone,password_hash,role,verified,allowance,voice_credits) VALUES(?,?,?,?,?,1,10000,8)",
     id,
     name,
     phone,
@@ -42,6 +42,19 @@ for (let i = 0; i < 8; i++)
     "Test contact " + i,
     "+23324555800" + i,
   );
+const retryId = crypto.randomUUID();
+run(
+  "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,list_ids,status,provider) VALUES(?,?,'Retry browser fixture','sms','Retry test message','NDC',?,'attention','arkesel')",
+  retryId,
+  member,
+  JSON.stringify([list]),
+);
+run(
+  "INSERT INTO deliveries(id,campaign_id,phone,status,provider_id) VALUES(?,?,?,'failed','old-test-batch')",
+  crypto.randomUUID(),
+  retryId,
+  "+233245558000",
+);
 let working = false;
 const interval = setInterval(async () => {
   if (working) return;

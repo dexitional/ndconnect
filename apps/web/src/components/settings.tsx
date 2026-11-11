@@ -31,6 +31,7 @@ export function AdminUsers() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Row | null>(null);
   const [grant, setGrant] = useState(1000);
+  const [creditType, setCreditType] = useState("sms");
   const [busy, setBusy] = useState(false);
   async function update(user: Row, data: Row) {
     setBusy(true);
@@ -53,7 +54,7 @@ export function AdminUsers() {
       <PageHeading
         eyebrow="YOUR PLATFORM, YOUR PEOPLE"
         title="People & access"
-        description="Manage member access and allocate messaging allowance."
+        description="Manage member access and allocate SMS or voice credits."
       />
       <div className="toolbar">
         <div className="search-field">
@@ -75,7 +76,7 @@ export function AdminUsers() {
                 <th>Member</th>
                 <th>Contact</th>
                 <th>Role</th>
-                <th>Send allowance</th>
+                <th>SMS credits</th>
                 <th>Voice credits</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -102,7 +103,7 @@ export function AdminUsers() {
                     <td>
                       <Badge>{u.role}</Badge>
                     </td>
-                    <td>{number(u.allowance)} units</td>
+                    <td>{number(u.allowance)} credits</td>
                     <td>{number(u.voice_credits || 0)}</td>
                     <td>
                       <Status value={u.status} />
@@ -140,18 +141,27 @@ export function AdminUsers() {
       <Dialog
         open={!!selected}
         onOpenChange={() => setSelected(null)}
-        title="Allocate send allowance"
-        description={`Add messaging units to ${selected?.name}’s account. These are platform limits, not provider account credits.`}
+        title="Allocate credits"
+        description={`Add SMS or voice credits to ${selected?.name}’s account.`}
       >
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void update(selected!, { grant });
+            void update(selected!, { grant, creditType });
           }}
         >
+          <Field label="Credit type">
+            <Select
+              value={creditType}
+              onChange={(e) => setCreditType(e.target.value)}
+            >
+              <option value="sms">SMS credits</option>
+              <option value="voice">Voice credits</option>
+            </Select>
+          </Field>
           <Field
             label="Units to add"
-            hint="One unit per SMS part or voice recipient."
+            hint="SMS: one per message part per recipient. Voice: one per recipient."
           >
             <Input
               type="number"
@@ -702,22 +712,23 @@ export function Profile({ user }: { user: Row }) {
             </Button>
           </form>
           <div className="section-separator" />
-          <h3>Messaging allowance</h3>
+          <h3>SMS credits</h3>
           <p>
-            <strong>{number(user.allowance)}</strong> send units available
+            <strong>{number(user.allowance)}</strong> SMS credits available
           </p>
-          <h3>Purchased voice credits</h3>
+          <h3>Voice credits</h3>
           <p>
             <strong>{number(user.voice_credits || 0)}</strong> voice credits
             available.{" "}
             <a className="text-link" href="/credits">
-              Buy voice credits
+              Buy SMS or voice credits
             </a>
           </p>
           <p className="muted">
-            Ask your administrator to allocate more units. One SMS part or one
-            voice recipient uses one unit. Cancelled, unsent campaigns return
-            their reserved allowance.
+            SMS and voice balances are separate. One SMS part per recipient uses
+            one SMS credit; one voice recipient uses one voice credit.
+            Cancelled, unsent deliveries return their credits to the original
+            balance.
           </p>
           {user.phone && (
             <a className="text-link" href="/reset-password">
@@ -759,8 +770,8 @@ export function Profile({ user }: { user: Row }) {
             ))}
           </div>
           <p className="notice">
-            New accounts start with no send allowance. Your administrator can
-            grant units in People & access.
+            New accounts start with zero credits. Buy SMS or voice credits, or
+            your administrator can grant units in People & access.
           </p>
         </section>
       </div>

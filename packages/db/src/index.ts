@@ -150,6 +150,26 @@ if (!db.prepare("SELECT 1 FROM migrations WHERE version=5").get()) {
     `);
   }).immediate();
 }
+if (!db.prepare("SELECT 1 FROM migrations WHERE version=6").get()) {
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM migrations WHERE version=6").get()) return;
+    db.exec(`
+      INSERT INTO settings(key,value) VALUES('sms_rate_pesewas','6');
+      ALTER TABLE payment_requests ADD COLUMN credit_type TEXT NOT NULL DEFAULT 'voice' CHECK(credit_type IN ('sms','voice'));
+      ALTER TABLE voice_credit_purchases RENAME TO credit_purchases;
+      ALTER TABLE credit_purchases ADD COLUMN credit_type TEXT NOT NULL DEFAULT 'voice' CHECK(credit_type IN ('sms','voice'));
+      ALTER TABLE campaigns ADD COLUMN source_campaign_id TEXT REFERENCES campaigns(id);
+      CREATE TABLE delivery_attempts (
+        id TEXT PRIMARY KEY, delivery_id TEXT NOT NULL REFERENCES deliveries(id),
+        campaign_id TEXT NOT NULL REFERENCES campaigns(id), phone TEXT NOT NULL,
+        status TEXT NOT NULL, provider_id TEXT, error TEXT, credit_source TEXT NOT NULL,
+        attempted_at TEXT NOT NULL, archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX attempts_campaign ON delivery_attempts(campaign_id);
+      INSERT INTO migrations(version) VALUES(6);
+    `);
+  }).immediate();
+}
 export type Row = Record<string, any>;
 export function one(sql: string, ...params: any[]): Row | undefined {
   return db.prepare(sql).get(...params) as Row | undefined;

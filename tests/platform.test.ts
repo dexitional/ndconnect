@@ -29,7 +29,7 @@ for (const [id, name, role] of [
   [other, "Other", "user"],
 ]) {
   run(
-    "INSERT INTO users(id,name,role,verified,allowance) VALUES(?,?,?,1,100000)",
+    "INSERT INTO users(id,name,role,verified,allowance,voice_credits) VALUES(?,?,?,1,100000,100000)",
     id,
     name,
     role,
@@ -1791,6 +1791,7 @@ test("payment settings use exact pesewa arithmetic and each order keeps its pric
     const config = (await req("/billing/settings")).data.settings;
     assert.deepEqual(config, {
       ratePesewas: 40,
+      smsRatePesewas: 6,
       phone: "0558641826",
       name: "Ebenezer Kwabena Blay Ackah",
       network: "Mobile Money",
@@ -1975,7 +1976,7 @@ test("submitted payments notify admins, reject duplicates and stale reviews, and
   );
   assert.equal(
     one(
-      "SELECT count(*) AS n FROM voice_credit_purchases WHERE payment_id=?",
+      "SELECT count(*) AS n FROM credit_purchases WHERE payment_id=?",
       order.id,
     )!.n,
     1,
@@ -2079,13 +2080,13 @@ test("rejected payments grant no credits, require a reason, and can be corrected
   );
 });
 
-test("voice credits cannot fund SMS and cancellation/opt-outs refund the original balances", async () => {
+test("channel balances are isolated and unsent voice refunds return only voice credits", async () => {
   const original = one(
     "SELECT allowance,voice_credits FROM users WHERE id=?",
     member,
   )!;
   try {
-    run("UPDATE users SET allowance=2,voice_credits=2 WHERE id=?", member);
+    run("UPDATE users SET allowance=100,voice_credits=2 WHERE id=?", member);
     const list = newList();
     for (const phone of ["+233245557201", "+233245557202", "+233245557203"])
       addContact(list, phone);
@@ -2095,75 +2096,66 @@ test("voice credits cannot fund SMS and cancellation/opt-outs refund the origina
       new File([Buffer.from("fLaCtest")], "funding.flac"),
     );
     const audioId = (await req("/audio", "POST", recording)).data.id;
-    const id = await campaign([list], {
-      channel: "voice",
-      audioId,
-      message: "",
-    });
-    assert.equal((await req(`/campaigns/${id}/queue`, "POST")).res.status, 200);
-    assert.deepEqual(
-      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
-      { allowance: 1, voice_credits: 0 },
-    );
-    assert.equal(
-      one(
-        "SELECT count(*) AS n FROM deliveries WHERE campaign_id=? AND credit_source='voice'",
-        id,
-      )!.n,
-      2,
-    );
-    await req(`/campaigns/${id}/cancel`, "POST");
-    assert.deepEqual(
-      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
-      { allowance: 2, voice_credits: 2 },
-    );
-    assert.equal(
-      (await req(`/campaigns/${id}/cancel`, "POST")).res.status,
-      409,
-    );
-    const sms = await campaign([list]);
-    assert.equal(
-      (await req(`/campaigns/${sms}/queue`, "POST")).res.status,
-      400,
-    );
-    assert.deepEqual(
-      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
-      { allowance: 2, voice_credits: 2 },
-    );
     const voice = await campaign([list], {
       channel: "voice",
       audioId,
       message: "",
     });
-    await req(`/campaigns/${voice}/queue`, "POST");
-    const voicePhone = one(
-      "SELECT phone FROM deliveries WHERE campaign_id=? AND credit_source='voice'",
-      voice,
-    )!.phone;
-    const allowancePhone = one(
-      "SELECT phone FROM deliveries WHERE campaign_id=? AND credit_source='allowance'",
-      voice,
-    )!.phone;
-    for (const phone of [voicePhone, allowancePhone])
-      run(
-        "INSERT INTO suppressions(phone,reason) VALUES(?,'Test opted out')",
-        phone,
-      );
-    await processOne(
-      async (_c, phones) =>
-        phones.map((phone) => ({ phone, providerId: "funded-test" })),
-      voice,
+    assert.equal(
+      (await req(`/campaigns/${voice}/queue`, "POST")).res.status,
+      400,
+    );
+    assert.equal(
+      one("SELECT count(*) AS n FROM deliveries WHERE campaign_id=?", voice)!.n,
+      0,
     );
     assert.deepEqual(
       one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
-      { allowance: 2, voice_credits: 1 },
+      { allowance: 100, voice_credits: 2 },
+    );
+    run("UPDATE users SET allowance=0,voice_credits=3 WHERE id=?", member);
+    const sms = await campaign([list]);
+    assert.equal(
+      (await req(`/campaigns/${sms}/queue`, "POST")).res.status,
+      400,
     );
     assert.equal(
-      one(
-        "SELECT count(*) AS n FROM deliveries WHERE campaign_id=? AND status='cancelled'",
-        voice,
-      )!.n,
-      2,
+      (await req(`/campaigns/${voice}/queue`, "POST")).res.status,
+      200,
+    );
+    assert.deepEqual(
+      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+      { allowance: 0, voice_credits: 0 },
+    );
+    assert.equal(
+      (await req(`/campaigns/${voice}/cancel`, "POST")).res.status,
+      200,
+    );
+    assert.equal(
+      (await req(`/campaigns/${voice}/cancel`, "POST")).res.status,
+      409,
+    );
+    assert.deepEqual(
+      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+      { allowance: 0, voice_credits: 3 },
+    );
+    const next = await campaign([list], {
+      channel: "voice",
+      audioId,
+      message: "",
+    });
+    await req(`/campaigns/${next}/queue`, "POST");
+    run(
+      "INSERT INTO suppressions(phone,reason) VALUES('+233245557201','Test')",
+    );
+    await processOne(
+      async (_c, phones) =>
+        phones.map((phone) => ({ phone, providerId: "channel-test" })),
+      next,
+    );
+    assert.deepEqual(
+      one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+      { allowance: 0, voice_credits: 1 },
     );
   } finally {
     run(
@@ -2173,4 +2165,301 @@ test("voice credits cannot fund SMS and cancellation/opt-outs refund the origina
       member,
     );
   }
+});
+
+test("SMS purchases use the six-pesewa rate and approval credits only SMS once", async () => {
+  const before = one(
+    "SELECT allowance,voice_credits FROM users WHERE id=?",
+    member,
+  )!;
+  const created = await req("/billing/orders", "POST", {
+    credits: 100,
+    creditType: "sms",
+  });
+  assert.equal(created.res.status, 201);
+  const order = created.data.order;
+  assert.equal(order.credit_type, "sms");
+  assert.equal(order.rate_pesewas, 6);
+  assert.equal(order.total_pesewas, 600);
+  const config = (await req("/billing/settings")).data.settings;
+  const changed = await req(
+    "/admin/payment-settings",
+    "PATCH",
+    {
+      rate: "0.40",
+      smsRate: "0.08",
+      phone: config.phone,
+      name: config.name,
+      network: config.network,
+    },
+    admin,
+  );
+  assert.equal(changed.res.status, 200);
+  assert.equal(changed.data.settings.smsRatePesewas, 8);
+  assert.equal(
+    one("SELECT rate_pesewas FROM payment_requests WHERE id=?", order.id)!
+      .rate_pesewas,
+    6,
+  );
+  run("UPDATE settings SET value='6' WHERE key='sms_rate_pesewas'");
+  const submitted = await req(
+    `/billing/orders/${order.id}`,
+    "PATCH",
+    paymentDetails(order),
+  );
+  assert.equal(submitted.res.status, 200);
+  const reviewed = await Promise.all(
+    [1, 2].map(() =>
+      req(
+        `/admin/payments/${order.id}/review`,
+        "POST",
+        { version: submitted.data.order.version, decision: "approved" },
+        admin,
+      ),
+    ),
+  );
+  assert.deepEqual(reviewed.map((r) => r.res.status).sort(), [200, 409]);
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    { allowance: before.allowance + 100, voice_credits: before.voice_credits },
+  );
+  assert.equal(
+    one(
+      "SELECT credit_type FROM credit_purchases WHERE payment_id=?",
+      order.id,
+    )!.credit_type,
+    "sms",
+  );
+  assert.ok(
+    (await req("/notifications")).data.notifications.some(
+      (n: any) => n.title === "SMS credits added",
+    ),
+  );
+  assert.equal(
+    (
+      await req("/billing/orders", "POST", {
+        credits: 1,
+        creditType: "anything",
+      })
+    ).res.status,
+    400,
+  );
+});
+
+test("retry reserves fresh matching credits once, preserves attempts and excludes successful or unknown deliveries", async () => {
+  run("UPDATE users SET status='active' WHERE id=?", other);
+  run(
+    "INSERT OR REPLACE INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+    hash(other),
+    other,
+    Date.now() + 86400000,
+  );
+
+  const list = newList();
+  for (let i = 0; i < 6; i++) addContact(list, "+23324555970" + i);
+  const id = await campaign([list], { message: "a".repeat(161) });
+  await req(`/campaigns/${id}/queue`, "POST");
+  const statuses = [
+    "failed",
+    "rejected",
+    "delivered",
+    "accepted",
+    "unknown",
+    "failed",
+  ];
+  const rows = all(
+    "SELECT * FROM deliveries WHERE campaign_id=? ORDER BY phone",
+    id,
+  );
+  rows.forEach((r, i) =>
+    run(
+      "UPDATE deliveries SET status=?,provider_id=? WHERE id=?",
+      statuses[i],
+      "old-batch",
+      r.id,
+    ),
+  );
+  run("INSERT INTO suppressions(phone,reason) VALUES(?,'Test')", rows[5].phone);
+  run("UPDATE campaigns SET status='attention' WHERE id=?", id);
+  assert.equal(
+    (await req(`/campaigns/${id}/retry`, "POST", {}, other)).res.status,
+    404,
+  );
+  const before = one(
+    "SELECT allowance,voice_credits FROM users WHERE id=?",
+    member,
+  )!;
+  run("UPDATE users SET allowance=0 WHERE id=?", member);
+  assert.equal((await req(`/campaigns/${id}/retry`, "POST")).res.status, 400);
+  assert.equal(
+    one("SELECT count(*) AS n FROM delivery_attempts WHERE campaign_id=?", id)!
+      .n,
+    0,
+  );
+  run("UPDATE users SET allowance=? WHERE id=?", before.allowance, member);
+  const responses = await Promise.all(
+    [1, 2].map(() => req(`/campaigns/${id}/retry`, "POST")),
+  );
+  assert.deepEqual(responses.map((r) => r.res.status).sort(), [200, 409]);
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    { allowance: before.allowance - 4, voice_credits: before.voice_credits },
+  );
+  assert.equal(
+    one(
+      "SELECT count(*) AS n FROM delivery_attempts WHERE campaign_id=? AND provider_id='old-batch'",
+      id,
+    )!.n,
+    2,
+  );
+  assert.deepEqual(
+    all(
+      "SELECT status FROM deliveries WHERE campaign_id=? ORDER BY phone",
+      id,
+    ).map((r) => r.status),
+    ["pending", "pending", "delivered", "accepted", "unknown", "failed"],
+  );
+  assert.equal(
+    one("SELECT provider_id FROM deliveries WHERE id=?", rows[0].id)!
+      .provider_id,
+    null,
+  );
+  let recipients: string[] = [];
+  await processOne(async (_c, phones) => {
+    recipients = phones;
+    return phones.map((phone) => ({ phone, providerId: "new-batch" }));
+  }, id);
+  assert.deepEqual(
+    recipients.sort(),
+    rows
+      .slice(0, 2)
+      .map((r) => r.phone)
+      .sort(),
+  );
+  assert.equal((await req(`/campaigns/${id}/retry`, "POST")).res.status, 409);
+});
+
+test("completed campaigns clone to uniquely suffixed drafts without deductions and charge on queue", async () => {
+  const list = newList();
+  addContact(list, "+233245559750");
+  const id = await campaign([list], {
+    name: "Community broadcast",
+    scheduledAt: Date.now() + 60000,
+  });
+  await req(`/campaigns/${id}/queue`, "POST");
+  run("UPDATE campaigns SET scheduled_at=NULL WHERE id=?", id);
+  await processOne(
+    async (_c, phones) =>
+      phones.map((phone) => ({ phone, providerId: "original-batch" })),
+    id,
+  );
+  const before = one(
+    "SELECT allowance,voice_credits FROM users WHERE id=?",
+    member,
+  )!;
+  assert.equal(
+    (await req(`/campaigns/${id}/clone`, "POST", {}, other)).res.status,
+    404,
+  );
+  const copies = await Promise.all(
+    [1, 2].map(() => req(`/campaigns/${id}/clone`, "POST")),
+  );
+  assert.deepEqual(
+    copies.map((c) => c.res.status),
+    [201, 201],
+  );
+  copies.forEach((r, i) => {
+    const copy = one("SELECT * FROM campaigns WHERE id=?", r.data.id)!;
+    assert.equal(copy.name, `Community broadcast - Copy ${i + 1}`);
+    assert.equal(copy.status, "draft");
+    assert.equal(copy.source_campaign_id, id);
+    assert.equal(copy.scheduled_at, null);
+    assert.equal(copy.message, "A community message");
+  });
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    before,
+  );
+  assert.equal(
+    (await req(`/campaigns/${copies[0].data.id}/clone`, "POST")).res.status,
+    409,
+  );
+  assert.equal(
+    (await req(`/campaigns/${copies[0].data.id}/queue`, "POST")).res.status,
+    200,
+  );
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before.allowance - 1,
+  );
+  assert.equal(
+    one("SELECT provider_id FROM deliveries WHERE campaign_id=?", id)!
+      .provider_id,
+    "original-batch",
+  );
+});
+
+test("voice retries charge voice only, cancellation refunds that attempt, and admin grants stay separated", async () => {
+  const before = one(
+    "SELECT allowance,voice_credits FROM users WHERE id=?",
+    member,
+  )!;
+  const list = newList();
+  addContact(list, "+233245559760");
+  const recording = new FormData();
+  recording.append("file", new File([Buffer.from("fLaCtest")], "retry.flac"));
+  const audioId = (await req("/audio", "POST", recording)).data.id;
+  const id = await campaign([list], { channel: "voice", audioId, message: "" });
+  await req(`/campaigns/${id}/queue`, "POST");
+  await processOne(async () => {
+    throw new ProviderError("Provider rejected this call");
+  }, id);
+  run("UPDATE users SET voice_credits=0 WHERE id=?", member);
+  assert.equal((await req(`/campaigns/${id}/retry`, "POST")).res.status, 400);
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${member}`,
+        "PATCH",
+        { grant: 2, creditType: "voice" },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before.allowance,
+  );
+  assert.equal((await req(`/campaigns/${id}/retry`, "POST")).res.status, 200);
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    { allowance: before.allowance, voice_credits: 1 },
+  );
+  assert.equal((await req(`/campaigns/${id}/cancel`, "POST")).res.status, 200);
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    { allowance: before.allowance, voice_credits: 2 },
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/users/${member}`,
+        "PATCH",
+        { grant: 3, creditType: "sms" },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    { allowance: before.allowance + 3, voice_credits: 2 },
+  );
+  run(
+    "UPDATE users SET allowance=?,voice_credits=? WHERE id=?",
+    before.allowance,
+    before.voice_credits,
+    member,
+  );
 });

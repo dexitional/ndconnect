@@ -17,6 +17,8 @@ import {
   Ban,
   FileText,
   Radio,
+  Copy,
+  RefreshCw,
 } from "lucide-react";
 import { Button, Input, Textarea, Select, Field, Dialog, Badge } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
@@ -176,7 +178,9 @@ export function Campaigns({ admin = false }: { admin?: boolean }) {
       </section>
       {selected && (
         <CampaignDetail
+          key={selected}
           id={selected}
+          openCampaign={setSelected}
           close={() => setSelected(null)}
           onChange={() =>
             void client.invalidateQueries({ queryKey: ["campaigns"] })
@@ -188,10 +192,12 @@ export function Campaigns({ admin = false }: { admin?: boolean }) {
 }
 function CampaignDetail({
   id,
+  openCampaign,
   close,
   onChange,
 }: {
   id: string;
+  openCampaign: (id: string) => void;
   close: () => void;
   onChange: () => void;
 }) {
@@ -202,16 +208,24 @@ function CampaignDetail({
   });
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [retryConfirm, setRetryConfirm] = useState(false);
   async function act(action: string) {
     setBusy(true);
     try {
-      await post(`/campaigns/${id}/${action}`);
+      const result = await post(`/campaigns/${id}/${action}`);
+      if (action === "clone") {
+        onChange();
+        openCampaign(result.id);
+        toast.success("Campaign copy created. Review it before sending.");
+        return;
+      }
       toast.success(
         action === "cancel"
           ? "Campaign cancelled."
           : "Campaign queued for sending.",
       );
       setConfirm(false);
+      setRetryConfirm(false);
       void q.refetch();
       onChange();
     } catch (e) {
@@ -270,7 +284,33 @@ function CampaignDetail({
             delivery report confirmed it. Unknown results need reconciliation
             before resending.
           </p>
+          {c.source_campaign_id && (
+            <p className="notice">
+              This is a new copy. Sending uses the selected lists’ current
+              eligible contacts and deducts{" "}
+              {c.channel === "sms" ? "SMS" : "voice"} credits.
+            </p>
+          )}
           <div className="dialog-actions">
+            {c.status === "completed" && (
+              <Button
+                variant="outline"
+                busy={busy}
+                onClick={() => void act("clone")}
+              >
+                <Copy size={15} /> Clone and resend
+              </Button>
+            )}
+            {["attention", "completed", "failed", "rejected"].includes(
+              c.status,
+            ) &&
+              q.data.breakdown.some((r: Row) =>
+                ["failed", "rejected"].includes(r.status),
+              ) && (
+                <Button busy={busy} onClick={() => setRetryConfirm(true)}>
+                  <RefreshCw size={15} /> Retry failed recipients
+                </Button>
+              )}
             {c.status === "attention" &&
               q.data.breakdown.some((r: Row) => r.status === "pending") && (
                 <Button busy={busy} onClick={() => void act("resume")}>
@@ -299,12 +339,29 @@ function CampaignDetail({
               </a>
             </Button>
           </div>
+          {retryConfirm && (
+            <div className="confirm-send">
+              <h3>Retry failed recipients?</h3>
+              <p>
+                Failed and rejected recipients will be retried using new{" "}
+                {c.channel === "sms" ? "SMS" : "voice"} credits. Unsent
+                recipients keep their existing reservation. Delivered, accepted,
+                unknown, and opted-out recipients will not be retried.
+              </p>
+              <Button busy={busy} onClick={() => void act("retry")}>
+                Confirm retry
+              </Button>
+              <Button variant="ghost" onClick={() => setRetryConfirm(false)}>
+                Go back
+              </Button>
+            </div>
+          )}
           {confirm && (
             <div className="confirm-send">
               <h3>Ready to send?</h3>
               <p>
                 This will submit your campaign to the selected audience and use
-                your send allowance.
+                your {c.channel === "sms" ? "SMS" : "voice"} credits.
               </p>
               <Button busy={busy} onClick={() => void act("queue")}>
                 Confirm and queue
@@ -723,25 +780,21 @@ export function Composer({ user }: { user: Row }) {
               <span>
                 {channel === "voice"
                   ? "Available voice sends"
-                  : "Your allowance"}
+                  : "Available SMS credits"}
               </span>
               <b>
                 {number(
-                  user.allowance +
-                    (channel === "voice" ? user.voice_credits || 0 : 0),
+                  channel === "voice"
+                    ? user.voice_credits || 0
+                    : user.allowance,
                 )}
               </b>
             </div>
             <p>
-              {channel === "voice" ? (
-                <>
-                  {number(user.voice_credits || 0)} purchased voice credits plus{" "}
-                  {number(user.allowance)} general send units.{" "}
-                  <a href="/credits">Buy voice credits</a>.
-                </>
-              ) : (
-                "SMS uses your administrator-managed send allowance."
-              )}
+              {channel === "voice"
+                ? "Voice campaigns use voice credits only."
+                : "Text broadcasts use SMS credits only, one per SMS part per recipient."}{" "}
+              <a href="/credits">Buy credits</a>.
             </p>
             <Button
               className="full"
@@ -802,7 +855,7 @@ export function Composer({ user }: { user: Row }) {
         </label>
         <p className="muted">
           Repeated numbers and opted-out contacts will be excluded. Queuing uses
-          your send allowance.
+          your {channel === "sms" ? "SMS" : "voice"} credits.
         </p>
         <Button
           className="full"
