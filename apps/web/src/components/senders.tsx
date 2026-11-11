@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Button, Input, Textarea, Select, Field, Dialog } from "@ndc/ui";
+import { Button, Input, Textarea, Field, Dialog } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
 import { PageHeading, Loading, QueryError, Status, Empty } from "./workspace";
 
@@ -157,12 +157,6 @@ export function SenderIds({ admin = false }: { admin?: boolean }) {
               maxLength={11}
               pattern="(?=.*[A-Za-z])[A-Za-z0-9]+"
             />
-          </Field>
-          <Field label="Gateway">
-            <Select name="provider" defaultValue={q.data.provider || "arkesel"}>
-              <option value="arkesel">Arkesel</option>
-              <option value="mnotify">mNotify</option>
-            </Select>
           </Field>
           <Field label="Organization and purpose">
             <Textarea

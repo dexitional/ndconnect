@@ -2470,10 +2470,14 @@ test("Sender IDs require gateway confirmation, enforce ownership and gateway bin
   const created = await req("/sender-ids", "POST", {
     name: "TEAMCONNECT",
     purpose: "Community event invitations",
-    provider: "arkesel",
+    provider: "mnotify",
   });
   assert.equal(created.res.status, 201);
   const id = created.data.id;
+  assert.equal(
+    one("SELECT provider FROM sender_ids WHERE id=?", id)!.provider,
+    "arkesel",
+  );
   assert.equal(
     (
       await req("/sender-ids", "POST", {
@@ -2633,10 +2637,10 @@ test("Sender IDs require gateway confirmation, enforce ownership and gateway bin
 
 test("mNotify Sender ID approval requires a matching gateway Approved response", async () =>
   realMnotify(async () => {
+    run("UPDATE settings SET value='mnotify' WHERE key='messaging_provider'");
     const created = await req("/sender-ids", "POST", {
       name: "MNTEAM",
       purpose: "Community notices from members",
-      provider: "mnotify",
     });
     assert.equal(created.res.status, 201);
     const id = created.data.id;

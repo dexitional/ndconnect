@@ -477,6 +477,9 @@ test("member requests a Sender ID, admin confirms gateway registration, and appr
   await page
     .getByRole("button", { name: "Request Sender ID", exact: true })
     .click();
+  await expect(
+    page.getByRole("dialog").getByLabel("Gateway", { exact: true }),
+  ).toHaveCount(0);
   await page.getByLabel("Sender name").fill("TEAMNDC");
   await page
     .getByLabel("Organization and purpose")

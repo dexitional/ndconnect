@@ -63,7 +63,6 @@ senderRoutes.post("/sender-ids", async (c) => {
           "Use up to 11 letters and numbers, with at least one letter.",
         ),
       purpose: z.string().trim().min(10).max(500),
-      provider: z.enum(["arkesel", "mnotify"]),
     })
     .parse(await c.req.json());
   const user = c.get("user");
@@ -71,10 +70,11 @@ senderRoutes.post("/sender-ids", async (c) => {
     fail(429, "You can submit up to five Sender ID requests per day.");
   let requestId = "";
   db.transaction(() => {
+    const provider = activeProvider();
     const previous = one(
       "SELECT * FROM sender_ids WHERE user_id=? AND provider=? AND name=?",
       user.id,
-      b.provider,
+      provider,
       b.name,
     );
     if (previous && !["rejected", "revoked"].includes(previous.status))
@@ -91,7 +91,7 @@ senderRoutes.post("/sender-ids", async (c) => {
         "INSERT INTO sender_ids(id,user_id,provider,name,purpose) VALUES(?,?,?,?,?)",
         requestId,
         user.id,
-        b.provider,
+        provider,
         b.name,
         b.purpose,
       );
@@ -103,13 +103,13 @@ senderRoutes.post("/sender-ids", async (c) => {
     notify(
       user.id,
       "Sender ID request received",
-      `${b.name} (${b.provider}) is awaiting gateway registration and administrator approval.`,
+      `${b.name} (${provider}) is awaiting gateway registration and administrator approval.`,
       "/sender-ids",
       event,
     );
     notifyAdmins(
       "Sender ID awaiting approval",
-      `${user.name} requested ${b.name} on ${b.provider}. Register and verify it on the gateway before approval.`,
+      `${user.name} requested ${b.name} on ${provider}. Register and verify it on the gateway before approval.`,
       "/admin/sender-ids",
       event,
       user.id,
