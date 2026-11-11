@@ -300,7 +300,7 @@ test("member submits Mobile Money details, admin gets notified and approves voic
       .getByRole("button", { name: "Sign in", exact: true })
       .click();
     await adminPage
-      .getByRole("button", { name: /Notifications \(1 unread\)/ })
+      .getByRole("button", { name: /Notifications \(\d+ unread\)/ })
       .click();
     await expect(
       adminPage.getByText("Payment awaiting confirmation", { exact: true }),
@@ -348,7 +348,7 @@ test("member submits Mobile Money details, admin gets notified and approves voic
       page.getByRole("cell", { name: "approved", exact: true }),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: /Notifications \(1 unread\)/ })
+      .getByRole("button", { name: /Notifications \(\d+ unread\)/ })
       .click();
     await expect(
       page.getByText("Voice credits added", { exact: true }),
@@ -461,4 +461,105 @@ test("failed campaigns retry and completed campaigns create a suffixed copy for 
     fullPage: true,
     animations: "disabled",
   });
+});
+
+test("member requests a Sender ID, admin confirms gateway registration, and approved sender is used for SMS", async ({
+  page,
+  browser,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Phone number").fill("0245559002");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Browser-test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("link", { name: "SMS Sender IDs", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Request Sender ID", exact: true })
+    .click();
+  await page.getByLabel("Sender name").fill("TEAMNDC");
+  await page
+    .getByLabel("Organization and purpose")
+    .fill("Community organization event notices");
+  await page.getByRole("button", { name: "Submit Sender ID request" }).click();
+  await expect(
+    page.getByRole("cell", { name: "TEAMNDC", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "pending", exact: true }),
+  ).toBeVisible();
+  const context = await browser.newContext();
+  const admin = await context.newPage();
+  try {
+    await admin.goto("http://127.0.0.1:3111/admin/login");
+    await admin.getByLabel("Phone number").fill("0245559001");
+    await admin
+      .getByLabel("Password", { exact: true })
+      .fill("Browser-test-password");
+    await admin.getByRole("button", { name: "Sign in", exact: true }).click();
+    await admin
+      .getByRole("link", { name: "Sender ID approvals", exact: true })
+      .click();
+    await admin
+      .getByRole("row")
+      .filter({ hasText: "TEAMNDC" })
+      .getByRole("button", { name: "Review request" })
+      .click();
+    await admin
+      .getByLabel("Gateway confirmation / review note")
+      .fill("Verified registration in gateway dashboard");
+    await admin.getByRole("button", { name: "Approve Sender ID" }).click();
+    await expect(
+      admin.getByText(
+        "Confirm registration and approval on the selected gateway first.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await admin.getByRole("checkbox").check();
+    await admin.getByRole("button", { name: "Approve Sender ID" }).click();
+    await expect(
+      admin.getByRole("cell", { name: "approved", exact: true }),
+    ).toBeVisible();
+    await admin
+      .getByRole("link", { name: "SMS notifications", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () => {
+          const r = await admin.request.get("/api/admin/sms-notifications");
+          const data = await r.json();
+          return data.notifications.filter(
+            (n: any) =>
+              n.message.includes("TEAMNDC") && n.status === "accepted",
+          ).length;
+        },
+        { timeout: 15000 },
+      )
+      .toBe(4);
+    await expect(admin.locator(".content")).toHaveCSS("opacity", "1");
+    await admin.screenshot({
+      path: "test-results/sender-sms-notifications.png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.goto("/compose");
+    await page.getByLabel("Campaign name").fill("Branded SMS campaign");
+    await page.getByText("Neighborhood team", { exact: true }).click();
+    await expect(page.getByLabel("Sender ID")).toContainText("TEAMNDC");
+    await page.getByLabel("Sender ID").selectOption({ label: "TEAMNDC" });
+    await page
+      .getByLabel("Your message")
+      .fill("Hello from our approved sender.");
+    await page.getByRole("button", { name: "Review campaign" }).click();
+    await page.getByRole("dialog").getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Confirm and send" }).click();
+    await expect(
+      page.getByRole("dialog").getByText("Sender: TEAMNDC", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByText("completed", { exact: true }),
+    ).toBeVisible({ timeout: 15000 });
+  } finally {
+    await context.close();
+  }
 });

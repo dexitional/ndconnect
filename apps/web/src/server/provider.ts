@@ -197,9 +197,10 @@ export async function sendBatch(campaign: Row, phones: string[], audio?: Row) {
       providerId: "mock-" + crypto.randomUUID(),
     }));
   if (provider === "mnotify") return sendMnotify(campaign, phones, audio);
-  const callback = process.env.ARKESEL_WEBHOOK_SECRET
-    ? `${process.env.APP_URL}/api/webhooks/arkesel`
-    : undefined;
+  const callback =
+    !campaign.notification && process.env.ARKESEL_WEBHOOK_SECRET
+      ? `${process.env.APP_URL}/api/webhooks/arkesel`
+      : undefined;
   let data: any;
   if (campaign.channel === "sms") {
     data = await providerRequest("/api/v2/sms/send", {

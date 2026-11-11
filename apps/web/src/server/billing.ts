@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, one, all, run, audit, type Row } from "@ndc/db";
 import { normalizePhone } from "../lib/shared";
 import { money } from "../lib/billing";
+import { notify, notifyAdmins } from "./notifications";
 import { rateLimit } from "./security";
 
 type Env = { Variables: { user: Row } };
@@ -45,16 +46,6 @@ export function paymentSettings() {
     name: values.payment_name,
     network: values.payment_network,
   };
-}
-function notify(userId: string, title: string, message: string, href: string) {
-  run(
-    "INSERT INTO notifications(id,user_id,title,message,href) VALUES(?,?,?,?,?)",
-    crypto.randomUUID(),
-    userId,
-    title,
-    message,
-    href,
-  );
 }
 function ownedOrder(id: string, userId: string) {
   const order = one(
@@ -110,6 +101,13 @@ billingRoutes.post("/billing/orders", async (c) => {
       settings.name,
       settings.network,
       creditType,
+    );
+    notify(
+      user.id,
+      "Payment request created",
+      `Request ${id.slice(0, 8)}: pay ${money(credits * rate)} to ${settings.phone} for ${credits} ${creditType} credits, then submit transaction details.`,
+      "/credits?id=" + id,
+      `payment:${id}:created`,
     );
     audit(
       user.id,
@@ -180,17 +178,24 @@ billingRoutes.patch("/billing/orders/:id", async (c) => {
       body.note,
       order.id,
     );
-    for (const admin of all(
-      "SELECT id FROM users WHERE role='admin' AND status='active'",
-    ))
-      notify(
-        admin.id,
-        order.status === "pending"
-          ? "Payment details updated"
-          : "Payment awaiting confirmation",
-        `${user.name} submitted ${money(order.total_pesewas)} for ${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits.`,
-        "/admin/payments?id=" + order.id,
-      );
+    const event = `payment:${order.id}:submitted:${order.version + 1}`;
+    const message = `Request ${order.id.slice(0, 8)}: ${money(order.total_pesewas)} for ${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits awaits confirmation.`;
+    notify(
+      user.id,
+      "Payment details received",
+      message,
+      "/credits?id=" + order.id,
+      event,
+    );
+    notifyAdmins(
+      order.status === "pending"
+        ? "Payment details updated"
+        : "Payment awaiting confirmation",
+      `${user.name}. ${message}`,
+      "/admin/payments?id=" + order.id,
+      event,
+      user.id,
+    );
     audit(
       user.id,
       "payment.submitted",
@@ -337,6 +342,14 @@ billingRoutes.post("/admin/payments/:id/review", async (c) => {
         ? `${order.credits} ${order.credit_type === "sms" ? "SMS" : "voice"} credits have been added to your account.`
         : body.note,
       "/credits?id=" + order.id,
+      `payment:${order.id}:reviewed:${order.version + 1}`,
+    );
+    notifyAdmins(
+      `Payment ${body.decision}`,
+      `Request ${order.id.slice(0, 8)}: ${money(order.total_pesewas)} for ${order.credits} ${order.credit_type} credits was ${body.decision}.`,
+      "/admin/payments?id=" + order.id,
+      `payment:${order.id}:reviewed:${order.version + 1}`,
+      order.user_id,
     );
     audit(
       admin.id,

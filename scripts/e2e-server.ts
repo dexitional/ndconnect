@@ -12,6 +12,8 @@ process.env.NODE_ENV = "development";
 process.env.ARKESEL_API_KEY = "test-only-key";
 process.env.MNOTIFY_API_KEY = "test-only-mnotify-key";
 const { db, run } = await import("@ndc/db");
+const { processNotification } =
+  await import("../apps/web/src/server/notifications");
 const { processOne, maintenance } =
   await import("../apps/web/src/server/queue");
 const admin = crypto.randomUUID(),
@@ -61,6 +63,7 @@ const interval = setInterval(async () => {
   working = true;
   try {
     maintenance();
+    await processNotification();
     await processOne();
   } finally {
     working = false;

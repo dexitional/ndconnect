@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { replayReceipts } from "./webhooks";
+import { senderRoutes, approvedSender, checkCampaignSender } from "./senders";
 import { billingRoutes } from "./billing";
 import { refundRecipients, reserveCredits } from "./credits";
 import { audioMime } from "./audio";
@@ -398,6 +399,7 @@ apiApp.use("*", async (c, next) => {
   await next();
 });
 apiApp.route("/", billingRoutes);
+apiApp.route("/", senderRoutes);
 const listQuery = `SELECT l.*,u.name AS owner_name,(SELECT count(*) FROM contacts WHERE list_id=l.id) AS contact_count FROM lists l JOIN users u ON u.id=l.owner_id`;
 apiApp.get("/dashboard", (c) => {
   const u = c.get("user");
@@ -688,6 +690,7 @@ apiApp.get("/audio/:id", async (c) => {
   return c.body(await readFile(resolve(uploadDir, a.id)));
 });
 const campaignSchema = z.object({
+  senderId: z.string().uuid().nullable().default(null),
   name: z.string().trim().min(2).max(120),
   channel: z.enum(["sms", "voice"]),
   message: z.string().max(1600).default(""),
@@ -732,10 +735,14 @@ apiApp.post("/campaigns", async (c) => {
   if (b.scheduledAt && b.scheduledAt < Date.now())
     fail(400, "Choose a future delivery time.");
   const provider = activeProvider();
-  const sender = providerSender(provider, b.channel);
+  if (b.channel === "voice" && b.senderId)
+    fail(400, "SMS Sender IDs cannot be used for voice campaigns.");
+  const sender = b.senderId
+    ? approvedSender(b.senderId, u.id, provider).name
+    : providerSender(provider, b.channel);
   const campaignId = id();
   run(
-    "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,audio_id,list_ids,scheduled_at,provider) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,audio_id,list_ids,scheduled_at,provider,sender_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
     campaignId,
     u.id,
     b.name,
@@ -746,6 +753,7 @@ apiApp.post("/campaigns", async (c) => {
     JSON.stringify([...new Set(b.listIds)]),
     b.scheduledAt,
     provider,
+    b.senderId,
   );
   audit(u.id, "campaign.created", campaignId);
   return c.json({ id: campaignId }, 201);
@@ -811,6 +819,7 @@ apiApp.post("/campaigns/:id/queue", (c) => {
     )!;
     if (current.status !== "draft")
       fail(409, "This campaign has already been submitted.");
+    checkCampaignSender(campaign);
     const ids: string[] = JSON.parse(campaign.list_ids);
     accessibleLists(ids, { ...u, id: campaign.owner_id });
     const contacts = all(
@@ -842,6 +851,7 @@ apiApp.post("/campaigns/:id/resume", (c) => {
   const campaign = ownedCampaign(c.req.param("id"), u);
   assertProvider(campaign.provider);
   db.transaction(() => {
+    checkCampaignSender(campaign);
     accessibleLists(JSON.parse(campaign.list_ids), {
       ...u,
       id: campaign.owner_id,
@@ -883,6 +893,7 @@ apiApp.post("/campaigns/:id/retry", (c) => {
         "Only finished or paused campaigns with failed recipients can be retried.",
       );
     assertProvider(campaign.provider);
+    checkCampaignSender(campaign);
     accessibleLists(JSON.parse(campaign.list_ids), {
       ...user,
       id: campaign.owner_id,
@@ -959,19 +970,23 @@ apiApp.post("/campaigns/:id/clone", (c) => {
         name,
       )
     );
-    const provider = activeProvider();
+    checkCampaignSender(original);
+    const provider = original.sender_id ? original.provider : activeProvider();
     run(
-      "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,audio_id,list_ids,provider,source_campaign_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO campaigns(id,owner_id,name,channel,message,sender,audio_id,list_ids,provider,source_campaign_id,sender_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
       campaignId,
       original.owner_id,
       name,
       original.channel,
       original.message,
-      providerSender(provider, original.channel),
+      original.sender_id
+        ? original.sender
+        : providerSender(provider, original.channel),
       original.audio_id,
       original.list_ids,
       provider,
       original.id,
+      original.sender_id,
     );
     audit(
       user.id,

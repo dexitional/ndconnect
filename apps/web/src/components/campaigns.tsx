@@ -253,6 +253,7 @@ function CampaignDetail({
             <Badge>{c.channel === "sms" ? "SMS" : "Voice"}</Badge>
             <Badge>{c.provider === "mnotify" ? "mNotify" : "Arkesel"}</Badge>
             <span>{number(c.recipients)} recipients</span>
+            {c.channel === "sms" && <span>Sender: {c.sender}</span>}
           </div>
           {c.error && <p className="error">{c.error}</p>}
           {c.status === "queued" && !q.data.workerActive && (
@@ -410,6 +411,15 @@ export function Composer({ user }: { user: Row }) {
   const [channel, setChannel] = useState("sms");
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
+  const [senderId, setSenderId] = useState("");
+  const senderIds = useQuery({
+    queryKey: ["my-sender-ids"],
+    queryFn: () => api("/sender-ids"),
+    refetchInterval: 15000,
+  });
+  const selectedSender = senderIds.data?.senders.find(
+    (s: Row) => s.id === senderId,
+  );
   const [ids, setIds] = useState<string[]>([]);
   const [audio, setAudio] = useState<Row | null>(null);
   const [scheduled, setScheduled] = useState("");
@@ -477,6 +487,7 @@ export function Composer({ user }: { user: Row }) {
         const result = await post("/campaigns", {
           name,
           channel,
+          senderId: channel === "sms" ? senderId || null : null,
           message,
           audioId: audio?.id || null,
           listIds: ids,
@@ -650,7 +661,31 @@ export function Composer({ user }: { user: Row }) {
             {channel === "sms" ? (
               <>
                 <Field label="Sender ID">
-                  <Input value={config.data?.sender || "NDC"} readOnly />
+                  <Select
+                    value={senderId}
+                    onChange={(e) => {
+                      setSenderId(e.target.value);
+                      setDraftId(null);
+                    }}
+                  >
+                    <option value="">
+                      {config.data?.sender || "NDC"} (platform default)
+                    </option>
+                    {(senderIds.data?.senders || [])
+                      .filter(
+                        (s: Row) =>
+                          s.status === "approved" &&
+                          s.provider === config.data?.provider,
+                      )
+                      .map((s: Row) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </Select>
+                  <a className="text-link" href="/sender-ids">
+                    Request a Sender ID
+                  </a>
                 </Field>
                 <Field label="Your message">
                   <Textarea
@@ -737,7 +772,9 @@ export function Composer({ user }: { user: Row }) {
                   <Mic size={22} />
                 )}
               </span>
-              <strong>{config.data?.sender || "NDC"}</strong>
+              <strong>
+                {selectedSender?.name || config.data?.sender || "NDC"}
+              </strong>
               <small>
                 {channel === "sms" ? "Text message" : "Voice message"}
               </small>

@@ -14,6 +14,8 @@ A full-stack communications workspace for bulk SMS and recorded voice campaigns 
 - Recipient status reports and CSV export. Numbers available only through shared lists are masked for members in both reports and exports.
 - Signed Arkesel callbacks, replay protection, and an inbox for delivery callbacks received before the send response.
 - Account suspension, SMS/voice credit allocation, global opt-outs, gateway configuration status, and audit history.
+- User-owned SMS Sender IDs with gateway-specific administrator approval, revocation, and campaign selection.
+- Persistent SMS and workspace notifications for Sender ID requests/reviews and SMS/voice credit payments, with an administrator SMS notification log.
 - SQLite migrations, WAL, full commit durability, busy timeout, indexed access, online backups, and a separate campaign worker.
 
 ## Requirements and local startup
@@ -54,11 +56,23 @@ Run this command **on the production server**, with the same `DATABASE_PATH` and
 
 Members open **SMS & voice credits**, select SMS or voice, enter a credit quantity, and create a payment request. Initial prices are **GHC 0.06 per SMS credit** and **GHC 0.40 per voice credit**, payable to **0558641826 — Ebenezer Kwabena Blay Ackah**. Administrators can edit both rates independently, the receiving number, account name, and network under **Payments & credits → Payment settings**. Each request preserves its quoted rate, total, and payment destination even if settings change later.
 
-Send the exact quoted amount using your Mobile Money service, then enter the transaction ID, payer name and phone, network, amount, payment time, and any additional details. Submitting or updating these details alerts active administrators through the workspace notification bell (refreshed every 15 seconds). This is a manual transfer workflow; the application does not initiate the transfer or automatically verify a transaction ID.
+Send the exact quoted amount using your Mobile Money service, then enter the transaction ID, payer name and phone, network, amount, payment time, and any additional details. Submitting or updating these details alerts active administrators by SMS and through the workspace notification bell (refreshed every 15 seconds). This is a manual transfer workflow; the application does not initiate the transfer or automatically verify a transaction ID.
 
 Administrators open **Payments & credits**, verify receipt in the receiving Mobile Money account, and approve or reject the request. Approval adds the quoted credits to the selected SMS or voice balance and notifies the member. Rejection requires a reason; members can correct and resubmit their details. Approved payments cannot be edited. Unique transaction IDs, revision checks, and an atomic purchase ledger prevent duplicate credits and approval of details that changed during review.
 
 Each SMS part per recipient reserves one SMS credit; each voice recipient reserves one voice credit when queued. Balances are strictly separate: a voice campaign cannot use SMS credits and an SMS broadcast cannot use voice credits. Cancellation or a dispatch-time opt-out returns unsent units to the balance they came from. Submitted, rejected, or uncertain provider attempts retain their reservation pending operator reconciliation. Purchasing platform credits does not top up the gateway account: administrators must maintain the provider's separate balance.
+
+### SMS Sender IDs and notifications
+
+Members open **SMS Sender IDs → Request Sender ID**, select the gateway, and provide a name (1–11 letters/numbers, including a letter) and organizational purpose. Requests are local approval requests: administrators register the exact name in the corresponding gateway dashboard and wait for gateway approval before approving it under **Sender ID approvals**. Arkesel approval requires an explicit gateway confirmation and review note. mNotify approval additionally checks its authenticated `/senderid/status` endpoint and requires a matching name with `Approved` status. References: [mNotify Sender ID documentation](https://developer.bms.africa/#tag/Sender-ID), [Arkesel Sender ID guide](https://arkesel.com/how-to-send-bulk-sms-with-your-sender-id/).
+
+Only the requesting member can select their approved ID in the SMS composer, and only for the gateway that approved it. The platform default sender remains available. Campaigns snapshot the approved sender and provider; queueing, resuming, retrying, and worker dispatch recheck approval. Revocation stops unsent work before submission. Copies of custom-sender campaigns retain that sender's provider; copies using the platform default use the current provider. Rejected or revoked requests can be resubmitted for a new review.
+
+Sender ID requests and approval/rejection/revocation decisions notify the member and all active administrators by SMS and in the workspace. Payment requests first give the member payment instructions; submitting/updating transaction details and administrator review notify both the member and active administrators, for both SMS and voice purchases. SMS goes to each account's verified phone number. Accounts without one retain workspace notifications, with a skipped SMS entry in the log.
+
+The existing worker sends these alerts using the platform's configured SMS sender and gateway, independently of the custom Sender ID being reviewed. Alerts use provider account credit and **do not deduct members' SMS or voice balances**. Keep the configured platform sender approved and its gateway funded. Events and alert jobs commit in the same database transaction, with one SMS per event and account; an alert failure cannot roll back an approval or credit allocation.
+
+Administrators can inspect **SMS notifications** for pending, accepted, failed, unknown, or skipped jobs. Accepted means gateway acceptance, not handset delivery confirmation. Confirmed failures can be retried after fixing the underlying issue. Timeouts, missing provider references, and interrupted sends remain unknown and are not automatically resent. No alerts are generated retroactively for requests completed before this feature was deployed.
 
 ### Provider selection and mNotify configuration
 

@@ -1,3 +1,4 @@
+import { processNotification } from "../apps/web/src/server/notifications";
 import { db } from "@ndc/db";
 import { processOne, maintenance } from "../apps/web/src/server/queue";
 import { refreshMnotifyReports } from "../apps/web/src/server/reports";
@@ -19,7 +20,9 @@ while (!stop) {
       await refreshMnotifyReports();
       lastMaintenance = Date.now();
     }
-    if (!(await processOne())) await new Promise((r) => setTimeout(r, 1500));
+    const notified = await processNotification();
+    if (!(await processOne()) && !notified)
+      await new Promise((r) => setTimeout(r, 1500));
   } catch (error) {
     console.error(
       "Worker cycle failed; queue preserved.",

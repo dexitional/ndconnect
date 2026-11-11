@@ -36,6 +36,7 @@ import { api, post, type Row } from "../lib/api";
 import { number } from "../lib/shared";
 import { Contacts, LeadLibrary } from "./contacts";
 import { Campaigns, Composer } from "./campaigns";
+import { SenderIds, SmsNotifications } from "./senders";
 import { VoiceCredits, AdminPayments, NotificationBell } from "./billing";
 import {
   AdminUsers,
@@ -145,6 +146,7 @@ export function PageHeading({
   );
 }
 const navUser = [
+  { href: "/sender-ids", label: "SMS Sender IDs", icon: MessageSquare },
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/campaigns", label: "Campaigns", icon: Send },
   { href: "/contacts", label: "My contacts", icon: Users },
@@ -152,6 +154,16 @@ const navUser = [
   { href: "/credits", label: "SMS & voice credits", icon: CreditCard },
 ];
 const navAdmin = [
+  {
+    href: "/admin/sender-ids",
+    label: "Sender ID approvals",
+    icon: ShieldCheck,
+  },
+  {
+    href: "/admin/sms-notifications",
+    label: "SMS notifications",
+    icon: MessageSquare,
+  },
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/campaigns", label: "All campaigns", icon: Send },
   { href: "/admin/users", label: "People & access", icon: Users },
@@ -192,6 +204,9 @@ export function Workspace({ page = "" }: { page?: string }) {
         ? "My account"
         : "Workspace");
   const known = [
+    "sender-ids",
+    "admin/sender-ids",
+    "admin/sms-notifications",
     "",
     "campaigns",
     "contacts",
@@ -376,6 +391,10 @@ export function Workspace({ page = "" }: { page?: string }) {
             <Profile user={user} />
           ) : page === "credits" ? (
             <VoiceCredits user={user} />
+          ) : page.endsWith("sender-ids") ? (
+            <SenderIds admin={admin} />
+          ) : page === "admin/sms-notifications" ? (
+            <SmsNotifications />
           ) : page === "admin/payments" ? (
             <AdminPayments />
           ) : page === "admin/users" ? (

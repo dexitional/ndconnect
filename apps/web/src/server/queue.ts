@@ -1,5 +1,6 @@
 import { db, one, all, run, audit, type Row } from "@ndc/db";
 import { replayReceipts } from "./webhooks";
+import { checkCampaignSender } from "./senders";
 import { refundRecipients } from "./credits";
 import {
   sendBatch,
@@ -72,6 +73,13 @@ export async function processOne(
             )
           )
             return null;
+          try {
+            checkCampaignSender(campaign);
+          } catch {
+            throw new ProviderError(
+              "Sender ID approval is no longer valid. Contact your administrator.",
+            );
+          }
           const user = one(
             "SELECT status FROM users WHERE id=?",
             campaign.owner_id,

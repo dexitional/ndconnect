@@ -170,6 +170,34 @@ if (!db.prepare("SELECT 1 FROM migrations WHERE version=6").get()) {
     `);
   }).immediate();
 }
+if (!db.prepare("SELECT 1 FROM migrations WHERE version=7").get()) {
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM migrations WHERE version=7").get()) return;
+    db.exec(`
+      CREATE TABLE sender_ids (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL CHECK(provider IN ('arkesel','mnotify')),
+        name TEXT NOT NULL COLLATE NOCASE, purpose TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','revoked')),
+        version INTEGER NOT NULL DEFAULT 1, reviewer_id TEXT REFERENCES users(id), review_note TEXT,
+        gateway_verified_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id,provider,name)
+      );
+      CREATE INDEX sender_ids_status ON sender_ids(status,provider);
+      ALTER TABLE campaigns ADD COLUMN sender_id TEXT REFERENCES sender_ids(id);
+      CREATE TABLE sms_notifications (
+        id TEXT PRIMARY KEY, event_key TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id),
+        phone TEXT, message TEXT NOT NULL, provider TEXT NOT NULL, sender TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','accepted','failed','unknown','skipped')),
+        attempts INTEGER NOT NULL DEFAULT 0, lease_until INTEGER, provider_id TEXT, error TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(event_key,user_id)
+      );
+      CREATE INDEX sms_notifications_queue ON sms_notifications(status,created_at);
+      INSERT INTO migrations(version) VALUES(7);
+    `);
+  }).immediate();
+}
 export type Row = Record<string, any>;
 export function one(sql: string, ...params: any[]): Row | undefined {
   return db.prepare(sql).get(...params) as Row | undefined;

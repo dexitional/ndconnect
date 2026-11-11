@@ -2463,3 +2463,406 @@ test("voice retries charge voice only, cancellation refunds that attempt, and ad
     member,
   );
 });
+
+test("Sender IDs require gateway confirmation, enforce ownership and gateway binding, and stop after revocation", async () => {
+  run("UPDATE users SET phone='+233245551001',verified=1 WHERE id=?", member);
+  run("UPDATE users SET phone='+233245551002',verified=1 WHERE id=?", admin);
+  const created = await req("/sender-ids", "POST", {
+    name: "TEAMCONNECT",
+    purpose: "Community event invitations",
+    provider: "arkesel",
+  });
+  assert.equal(created.res.status, 201);
+  const id = created.data.id;
+  assert.equal(
+    (
+      await req("/sender-ids", "POST", {
+        name: "teamconnect",
+        purpose: "Community event invitations",
+        provider: "arkesel",
+      })
+    ).res.status,
+    409,
+  );
+  assert.equal(
+    (
+      await req("/sender-ids", "POST", {
+        name: "12345",
+        purpose: "Community event invitations",
+        provider: "arkesel",
+      })
+    ).res.status,
+    400,
+  );
+  const list = newList();
+  addContact(list, "+233245551003");
+  const payload = {
+    name: "Custom sender campaign",
+    channel: "sms",
+    message: "Hello",
+    listIds: [list],
+    senderId: id,
+  };
+  assert.equal((await req("/campaigns", "POST", payload)).res.status, 403);
+  assert.equal(
+    (
+      await req(`/admin/sender-ids/${id}/review`, "POST", {
+        version: 1,
+        decision: "approved",
+        gatewayRegistered: true,
+        note: "Confirmed in gateway dashboard",
+      })
+    ).res.status,
+    403,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/sender-ids/${id}/review`,
+        "POST",
+        {
+          version: 1,
+          decision: "approved",
+          note: "Confirmed in gateway dashboard",
+        },
+        admin,
+      )
+    ).res.status,
+    400,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/sender-ids/${id}/review`,
+        "POST",
+        {
+          version: 1,
+          decision: "approved",
+          gatewayRegistered: true,
+          note: "Confirmed in gateway dashboard",
+        },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/sender-ids/${id}/review`,
+        "POST",
+        {
+          version: 1,
+          decision: "approved",
+          gatewayRegistered: true,
+          note: "Duplicate confirmation",
+        },
+        admin,
+      )
+    ).res.status,
+    409,
+  );
+  assert.equal(
+    all("SELECT * FROM sms_notifications WHERE event_key=?", `sender:${id}:1`)
+      .length,
+    2,
+  );
+  assert.equal(
+    all("SELECT * FROM sms_notifications WHERE event_key=?", `sender:${id}:2`)
+      .length,
+    2,
+  );
+  assert.equal(
+    (await req("/sender-ids", "GET", undefined, other)).data.senders.some(
+      (s: any) => s.id === id,
+    ),
+    false,
+  );
+  const otherList = newList(other);
+  addContact(otherList, "+233245551004");
+  assert.equal(
+    (
+      await req(
+        "/campaigns",
+        "POST",
+        { ...payload, listIds: [otherList] },
+        other,
+      )
+    ).res.status,
+    403,
+  );
+  run("UPDATE settings SET value='mnotify' WHERE key='messaging_provider'");
+  assert.equal((await req("/campaigns", "POST", payload)).res.status, 403);
+  run("UPDATE settings SET value='arkesel' WHERE key='messaging_provider'");
+  const campaignId = (await req("/campaigns", "POST", payload)).data.id;
+  const campaignRow = one("SELECT * FROM campaigns WHERE id=?", campaignId)!;
+  assert.equal(campaignRow.sender, "TEAMCONNECT");
+  assert.equal(campaignRow.sender_id, id);
+  await req(`/campaigns/${campaignId}/queue`, "POST");
+  assert.equal(
+    (
+      await req(
+        `/admin/sender-ids/${id}/review`,
+        "POST",
+        {
+          version: 2,
+          decision: "revoked",
+          note: "Gateway registration withdrawn",
+        },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  let called = false;
+  await processOne(async () => {
+    called = true;
+    return [];
+  }, campaignId);
+  assert.equal(called, false);
+  assert.equal(
+    one("SELECT status FROM campaigns WHERE id=?", campaignId)!.status,
+    "attention",
+  );
+  assert.equal(
+    (await req(`/campaigns/${campaignId}/resume`, "POST")).res.status,
+    403,
+  );
+  await req(`/campaigns/${campaignId}/cancel`, "POST");
+});
+
+test("mNotify Sender ID approval requires a matching gateway Approved response", async () =>
+  realMnotify(async () => {
+    const created = await req("/sender-ids", "POST", {
+      name: "MNTEAM",
+      purpose: "Community notices from members",
+      provider: "mnotify",
+    });
+    assert.equal(created.res.status, 201);
+    const id = created.data.id;
+    let status = "Pending",
+      name = "MNTEAM",
+      calls = 0;
+    globalThis.fetch = async (url, init) => {
+      calls++;
+      assert.equal(new URL(String(url)).pathname, "/api/senderid/status");
+      assert.equal(JSON.parse(String(init?.body)).sender_name, "MNTEAM");
+      return Response.json({
+        status: "success",
+        code: "2000",
+        summary: { "sender name": name, status },
+      });
+    };
+    const body = {
+      version: 1,
+      decision: "approved",
+      gatewayRegistered: true,
+      note: "Gateway registration reviewed",
+    };
+    assert.equal(
+      (await req(`/admin/sender-ids/${id}/review`, "POST", body, admin)).res
+        .status,
+      409,
+    );
+    status = "Approved";
+    name = "WRONG";
+    assert.equal(
+      (await req(`/admin/sender-ids/${id}/review`, "POST", body, admin)).res
+        .status,
+      409,
+    );
+    name = "MNTEAM";
+    assert.equal(
+      (await req(`/admin/sender-ids/${id}/review`, "POST", body, admin)).res
+        .status,
+      200,
+    );
+    assert.equal(calls, 3);
+  }));
+
+test("SMS outbox claims once, preserves balances, and never automatically resends uncertain sends", async () => {
+  const { notify, processNotification } =
+    await import("../apps/web/src/server/notifications");
+  // Finish older fixture events so this test isolates its dispatch attempts.
+  run("UPDATE sms_notifications SET status='skipped' WHERE status='pending'");
+  const before = one(
+    "SELECT allowance,voice_credits FROM users WHERE id=?",
+    member,
+  )!;
+  db.transaction(() => {
+    notify(
+      member,
+      "Test event",
+      "Request received.",
+      "/credits",
+      "outbox-test",
+    );
+    notify(
+      member,
+      "Test event",
+      "Request received.",
+      "/credits",
+      "outbox-test",
+    );
+  }).immediate();
+  assert.equal(
+    one(
+      "SELECT count(*) AS n FROM sms_notifications WHERE event_key='outbox-test'",
+    )!.n,
+    1,
+  );
+  let sends = 0;
+  const send = async (c: any, phones: string[]) => {
+    sends++;
+    assert.equal(c.notification, true);
+    assert.notEqual(c.sender, "TEAMCONNECT");
+    assert.deepEqual(phones, ["+233245551001"]);
+    await new Promise((r) => setTimeout(r, 5));
+    return phones.map((phone) => ({ phone, providerId: "alert-ref" }));
+  };
+  await Promise.all([processNotification(send), processNotification(send)]);
+  assert.equal(sends, 1);
+  assert.equal(
+    one("SELECT status FROM sms_notifications WHERE event_key='outbox-test'")!
+      .status,
+    "accepted",
+  );
+  assert.deepEqual(
+    one("SELECT allowance,voice_credits FROM users WHERE id=?", member),
+    before,
+  );
+  db.transaction(() =>
+    notify(
+      member,
+      "Uncertain event",
+      "Do not duplicate.",
+      "/credits",
+      "outbox-unknown",
+    ),
+  ).immediate();
+  await processNotification(async () => {
+    throw new ProviderError("Timed out", true);
+  });
+  const unknown = one(
+    "SELECT * FROM sms_notifications WHERE event_key='outbox-unknown'",
+  )!;
+  assert.equal(unknown.status, "unknown");
+  assert.equal(await processNotification(send), false);
+  assert.equal(
+    (
+      await req(
+        `/admin/sms-notifications/${unknown.id}/retry`,
+        "POST",
+        { attempts: unknown.attempts },
+        admin,
+      )
+    ).res.status,
+    409,
+  );
+  db.transaction(() =>
+    notify(member, "Rejected event", "Can retry.", "/credits", "outbox-failed"),
+  ).immediate();
+  await processNotification(async () => {
+    throw new ProviderError("Rejected", false);
+  });
+  const failed = one(
+    "SELECT * FROM sms_notifications WHERE event_key='outbox-failed'",
+  )!;
+  assert.equal(failed.status, "failed");
+  assert.equal(
+    (
+      await req(`/admin/sms-notifications/${failed.id}/retry`, "POST", {
+        attempts: failed.attempts,
+      })
+    ).res.status,
+    403,
+  );
+  assert.equal(
+    (
+      await req(
+        `/admin/sms-notifications/${failed.id}/retry`,
+        "POST",
+        { attempts: failed.attempts },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+  await processNotification(send);
+  assert.equal(
+    one("SELECT status FROM sms_notifications WHERE id=?", failed.id)!.status,
+    "accepted",
+  );
+  db.transaction(() =>
+    notify(member, "Lost worker", "Reconcile.", "/credits", "outbox-stale"),
+  ).immediate();
+  run(
+    "UPDATE sms_notifications SET status='sending',lease_until=0 WHERE event_key='outbox-stale'",
+  );
+  await processNotification(send);
+  assert.equal(
+    one("SELECT status FROM sms_notifications WHERE event_key='outbox-stale'")!
+      .status,
+    "unknown",
+  );
+});
+
+test("SMS and voice payment submissions and reviews queue alerts for the user and administrator exactly once", async () => {
+  for (const creditType of ["sms", "voice"]) {
+    const created = await req("/billing/orders", "POST", {
+      credits: 2,
+      creditType,
+    });
+    assert.equal(created.res.status, 201);
+    const order = created.data.order;
+    const submitted = await req(
+      `/billing/orders/${order.id}`,
+      "PATCH",
+      paymentDetails(order),
+    );
+    assert.equal(submitted.res.status, 200);
+    const event = `payment:${order.id}:submitted:2`;
+    const notices = all(
+      "SELECT * FROM sms_notifications WHERE event_key=?",
+      event,
+    );
+    assert.equal(notices.length, 2);
+    assert.deepEqual(
+      new Set(notices.map((n) => n.user_id)),
+      new Set([member, admin]),
+    );
+    assert.ok(notices.every((n) => n.status === "pending"));
+    const approved = await req(
+      `/admin/payments/${order.id}/review`,
+      "POST",
+      { version: 2, decision: "approved" },
+      admin,
+    );
+    assert.equal(approved.res.status, 200);
+    assert.equal(
+      all(
+        "SELECT * FROM sms_notifications WHERE event_key=?",
+        `payment:${order.id}:reviewed:3`,
+      ).length,
+      2,
+    );
+    assert.equal(
+      (
+        await req(
+          `/admin/payments/${order.id}/review`,
+          "POST",
+          { version: 2, decision: "approved" },
+          admin,
+        )
+      ).res.status,
+      409,
+    );
+    assert.equal(
+      all(
+        "SELECT * FROM sms_notifications WHERE event_key=?",
+        `payment:${order.id}:reviewed:3`,
+      ).length,
+      2,
+    );
+  }
+});
