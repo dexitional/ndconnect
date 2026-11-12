@@ -710,7 +710,10 @@ export function NotificationBell() {
     <>
       <Button
         variant="ghost"
+        size="icon"
         className="notification-trigger top-icon"
+        title="Notifications"
+        aria-haspopup="dialog"
         aria-label={`Notifications (${q.data?.unread || 0} unread)`}
         onClick={() => setOpen(true)}
       >

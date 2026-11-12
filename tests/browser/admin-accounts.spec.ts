@@ -95,10 +95,10 @@ test("administrators create, edit, reset, and suspend another administrator", as
 });
 
 test("branding and top-bar icons fit narrow screens", async ({ page }) => {
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await expect(page.locator(".auth-tagline")).toHaveCSS(
     "font-family",
-    /Manrope/,
+    /DM Serif Display/,
   );
   await page.setViewportSize({ width: 320, height: 640 });
   const brand = await page.locator(".auth-brand").boundingBox();
@@ -111,7 +111,7 @@ test("branding and top-bar icons fit narrow screens", async ({ page }) => {
     .fill("Browser-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const bell = page.getByRole("button", { name: /Notifications \(/ });
-  const help = page.getByRole("link", { name: "Workspace help" });
+  const help = page.getByRole("button", { name: "Workspace help" });
   for (const control of [bell, help]) {
     await expect(control).toBeInViewport({ ratio: 1 });
     const icon = control.locator("svg");
@@ -133,7 +133,7 @@ test("branding and top-bar icons fit narrow screens", async ({ page }) => {
     ),
   ).toBe(true);
   await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await expect(page.locator(".workspace-switch")).toHaveText(
+  await expect(page.locator(".workspace-switch")).toHaveAccessibleName(
     "Administration Platform",
   );
   await expect(page.locator(".brand small")).toHaveCSS("font-size", "9px");
@@ -141,6 +141,6 @@ test("branding and top-bar icons fit narrow screens", async ({ page }) => {
   await page.screenshot({ path: "test-results/topbar-icons-mobile.png" });
   await help.click();
   await expect(
-    page.getByRole("heading", { name: "My account", exact: true }),
+    page.getByRole("dialog", { name: "Contact us", exact: true }),
   ).toBeVisible();
 });

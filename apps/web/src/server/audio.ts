@@ -1,4 +1,124 @@
-import { extname } from "node:path";
+import { extname, resolve } from "node:path";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import ffmpegPath from "ffmpeg-static";
+import { HTTPException } from "hono/http-exception";
+
+const execute = promisify(execFile);
+const maxAudioSize = 10 * 1024 * 1024;
+let conversions = 0;
+
+export async function prepareAudio(originalName: string, input: Buffer) {
+  const extension = extname(originalName).toLowerCase();
+  const safeName = originalName.replace(/[^\w. -]/g, "");
+  if (extension === ".mp3" || extension === ".wav") {
+    const mime = audioMime(originalName, input);
+    if (!mime)
+      throw new HTTPException(400, {
+        message: "The recording does not match its audio format.",
+      });
+    return {
+      bytes: input,
+      filename:
+        (safeName.slice(0, -extension.length).slice(0, 96) || "recording") +
+        extension,
+      mime,
+      converted: false,
+    };
+  }
+  if (conversions >= 2)
+    throw new HTTPException(503, {
+      message: "Audio conversion is busy. Please try uploading again shortly.",
+    });
+  const executable = process.env.FFMPEG_PATH || ffmpegPath;
+  if (!executable)
+    throw new HTTPException(503, {
+      message:
+        "Audio conversion is unavailable. Please upload MP3 or WAV, or contact your administrator.",
+    });
+  conversions++;
+  let directory: string | undefined;
+  try {
+    directory = await mkdtemp(resolve(tmpdir(), "ndcms-audio-"));
+    const source = resolve(directory, "input");
+    const target = resolve(directory, "recording.wav");
+    await writeFile(source, input, { mode: 0o600, flag: "wx" });
+    await execute(
+      executable,
+      [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-xerror",
+        // Exclude playlists and network protocols; only decode self-contained media.
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        "aac,ac3,aiff,amr,ape,asf,au,caf,dts,eac3,flac,matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mp3,ogg,oma,wav,wv",
+        "-threads",
+        "1",
+        "-i",
+        source,
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-sn",
+        "-dn",
+        "-map_metadata",
+        "-1",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        "-threads",
+        "1",
+        "-fs",
+        String(maxAudioSize + 1),
+        "-f",
+        "wav",
+        target,
+      ],
+      { timeout: 30000, killSignal: "SIGKILL", maxBuffer: 256 * 1024 },
+    );
+    if ((await stat(target)).size > maxAudioSize)
+      throw new HTTPException(400, {
+        message:
+          "The converted WAV exceeds 10 MB. Please upload a shorter recording.",
+      });
+    const bytes = await readFile(target);
+    if (bytes.length <= 44 || audioMime("recording.wav", bytes) !== "audio/wav")
+      throw new HTTPException(400, {
+        message: "This file does not contain a usable audio recording.",
+      });
+    const stem =
+      safeName.slice(0, safeName.length - extension.length).slice(0, 96) ||
+      "recording";
+    return {
+      bytes,
+      filename: `${stem}.wav`,
+      mime: "audio/wav",
+      converted: true,
+    };
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    const unavailable = ["ENOENT", "EACCES"].includes(
+      (error as NodeJS.ErrnoException).code || "",
+    );
+    throw new HTTPException(unavailable ? 503 : 400, {
+      message: unavailable
+        ? "Audio conversion is unavailable. Please upload MP3 or WAV, or contact your administrator."
+        : "This recording could not be converted to WAV. It may be damaged or use an unsupported codec. Please export it as MP3 or WAV and try again.",
+    });
+  } finally {
+    conversions--;
+    if (directory) await rm(directory, { recursive: true, force: true });
+  }
+}
 
 export function audioMime(filename: string, bytes: Buffer): string | null {
   const extension = extname(filename).toLowerCase();

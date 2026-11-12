@@ -21,6 +21,7 @@ const admin = crypto.randomUUID(),
 for (const [id, name, phone, role] of [
   [admin, "Platform Admin", "+233245559001", "admin"],
   [member, "Ama Mensah", "+233245559002", "user"],
+  [crypto.randomUUID(), "Ama Interface", "+233245559003", "user"],
 ])
   run(
     "INSERT INTO users(id,name,phone,password_hash,role,verified,allowance,voice_credits) VALUES(?,?,?,?,?,1,10000,8)",

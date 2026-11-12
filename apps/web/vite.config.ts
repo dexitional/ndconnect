@@ -15,6 +15,9 @@ export default defineConfig({
   plugins: [
     nitro({
       preset: "node-server",
+      // Keep the executable beside its package; bundling JS alone loses its path.
+      rollupConfig: { external: ["ffmpeg-static"] },
+      traceDeps: ["ffmpeg-static*"],
       rootDir: cache,
       buildDir: resolve(cache, "nitro"),
       // rootDir is an isolated cache, so Nitro cannot discover the app's public/
@@ -31,5 +34,5 @@ export default defineConfig({
     react(),
   ],
   server: { port: 3100 },
-  ssr: { external: ["better-sqlite3"] },
+  ssr: { external: ["better-sqlite3", "ffmpeg-static"] },
 });

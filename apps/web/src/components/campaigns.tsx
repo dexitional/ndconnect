@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { Button, Input, Textarea, Select, Field, Dialog, Badge } from "@ndc/ui";
-import { api, post, type Row } from "../lib/api";
+import { api, post, patch, type Row } from "../lib/api";
 import { smsParts, number } from "../lib/shared";
 import { audioFormats } from "../lib/billing";
 import { Empty, Loading, QueryError, PageHeading, Status } from "./workspace";
@@ -212,6 +212,7 @@ function CampaignDetail({
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [retryConfirm, setRetryConfirm] = useState(false);
+  const [editingAudience, setEditingAudience] = useState(false);
   async function act(action: string) {
     setBusy(true);
     try {
@@ -296,13 +297,29 @@ function CampaignDetail({
             </p>
           )}
           <div className="dialog-actions">
-            {c.status === "completed" && (
+            {["draft", "cancelled"].includes(c.status) && (
+              <Button
+                variant="outline"
+                disabled={busy || editingAudience}
+                onClick={() => {
+                  setConfirm(false);
+                  setEditingAudience(true);
+                }}
+              >
+                <Users size={15} /> Edit contact lists
+              </Button>
+            )}
+            {["completed", "cancelled"].includes(c.status) && (
               <Button
                 variant="outline"
                 busy={busy}
+                disabled={editingAudience}
                 onClick={() => void act("clone")}
               >
-                <Copy size={15} /> Clone and resend
+                <Copy size={15} />{" "}
+                {c.status === "cancelled"
+                  ? "Resend campaign"
+                  : "Clone and resend"}
               </Button>
             )}
             {["attention", "completed", "failed", "rejected"].includes(
@@ -322,7 +339,11 @@ function CampaignDetail({
                 </Button>
               )}
             {c.status === "draft" && (
-              <Button busy={busy} onClick={() => setConfirm(true)}>
+              <Button
+                busy={busy}
+                disabled={editingAudience}
+                onClick={() => setConfirm(true)}
+              >
                 <Send size={15} /> Send campaign
               </Button>
             )}
@@ -332,6 +353,7 @@ function CampaignDetail({
               <Button
                 variant="outline"
                 busy={busy}
+                disabled={editingAudience}
                 onClick={() => void act("cancel")}
               >
                 <Ban size={15} /> Cancel campaign
@@ -343,6 +365,25 @@ function CampaignDetail({
               </a>
             </Button>
           </div>
+          {c.status === "cancelled" && (
+            <p className="notice">
+              Resend creates a new draft using these contact lists. Review it
+              before sending to the entire selected audience again, including
+              anyone who received an earlier attempt. The cancelled campaign’s
+              report is preserved.
+            </p>
+          )}
+          {editingAudience && (
+            <CampaignAudience
+              campaign={c}
+              close={() => setEditingAudience(false)}
+              saved={() => {
+                setEditingAudience(false);
+                void q.refetch();
+                onChange();
+              }}
+            />
+          )}
           {retryConfirm && (
             <div className="confirm-send">
               <h3>Retry failed recipients?</h3>
@@ -410,6 +451,145 @@ function CampaignDetail({
     </Dialog>
   );
 }
+function CampaignAudience({
+  campaign,
+  close,
+  saved,
+}: {
+  campaign: Row;
+  close: () => void;
+  saved: () => void;
+}) {
+  const [ids, setIds] = useState<string[]>(JSON.parse(campaign.list_ids));
+  const [busy, setBusy] = useState(false);
+  const [editingList, setEditingList] = useState<Row | null>(null);
+  const lists = useQuery({
+    queryKey: ["campaign-audience", campaign.id],
+    queryFn: () => api(`/campaigns/${campaign.id}/audience`),
+  });
+  const unavailable =
+    lists.data &&
+    ids.filter((id) => !lists.data.lists.some((list: Row) => list.id === id));
+  async function save() {
+    setBusy(true);
+    try {
+      await patch(`/campaigns/${campaign.id}/audience`, { listIds: ids });
+      toast.success("Campaign contact lists updated.");
+      saved();
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section
+      className="campaign-audience"
+      aria-label="Edit campaign contact lists"
+    >
+      <h3>Campaign contact lists</h3>
+      <p className="muted">
+        Choose the lists to use when this campaign is sent. Contacts are
+        refreshed at sending time.
+      </p>
+      {lists.isLoading ? (
+        <Loading />
+      ) : lists.isError ? (
+        <QueryError error={lists.error} retry={() => void lists.refetch()} />
+      ) : (
+        <>
+          {!!unavailable?.length && (
+            <p className="notice">
+              Some previously selected lists are no longer available.{" "}
+              <button
+                type="button"
+                className="contact-us-link"
+                onClick={() =>
+                  setIds(ids.filter((id) => !unavailable.includes(id)))
+                }
+              >
+                Remove unavailable lists
+              </button>
+            </p>
+          )}
+          <div className="audience-list">
+            {lists.data.lists.map((list: Row) => (
+              <div className="audience-row" key={list.id}>
+                <label
+                  className={`audience-option ${ids.includes(list.id) ? "checked" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={ids.includes(list.id)}
+                    disabled={busy}
+                    onChange={(e) =>
+                      setIds((current) =>
+                        e.target.checked
+                          ? [...current, list.id]
+                          : current.filter((id) => id !== list.id),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{list.name}</strong>
+                    <small>
+                      {number(list.contact_count)} contacts ·{" "}
+                      {list.visibility === "shared" ? "Shared" : "Private"}
+                    </small>
+                  </span>
+                </label>
+                {list.canEdit && (
+                  <div className="audience-actions">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => setEditingList(list)}
+                    >
+                      <Pencil size={14} /> Manage contacts
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {!lists.data.lists.length && (
+            <p className="notice">
+              Create a contact list in My contacts, then return here to select
+              it.
+            </p>
+          )}
+        </>
+      )}
+      <div className="dialog-actions">
+        <Button
+          busy={busy}
+          disabled={
+            !ids.length ||
+            ids.length > 50 ||
+            !lists.data ||
+            !!unavailable?.length
+          }
+          onClick={() => void save()}
+        >
+          Save contact lists
+        </Button>
+        <Button variant="ghost" disabled={busy} onClick={close}>
+          Discard changes
+        </Button>
+      </div>
+      {editingList && (
+        <ContactManager
+          list={editingList}
+          close={() => {
+            setEditingList(null);
+            void lists.refetch();
+          }}
+        />
+      )}
+    </section>
+  );
+}
 export function Composer({ user }: { user: Row }) {
   const [channel, setChannel] = useState("sms");
   const [name, setName] = useState("");
@@ -465,8 +645,13 @@ export function Composer({ user }: { user: Row }) {
     try {
       const form = new FormData();
       form.append("file", file);
-      setAudio(await post("/audio", form));
-      toast.success("Recording uploaded.");
+      const recording = await post("/audio", form);
+      setAudio(recording);
+      toast.success(
+        recording.converted
+          ? "Recording converted to WAV and uploaded."
+          : "Recording uploaded.",
+      );
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -770,9 +955,14 @@ export function Composer({ user }: { user: Row }) {
                 <label className="upload-zone">
                   <Upload size={28} />
                   <strong>
-                    {audio ? audio.filename : "Upload your voice recording"}
+                    {busy
+                      ? "Preparing your recording…"
+                      : audio
+                        ? audio.filename
+                        : "Upload your voice recording"}
                   </strong>
-                  <span>MP3, WAV, FLAC, AAC, WMA, M4A, OGG · up to 10 MB</span>
+                  <span>Audio recordings · up to 10 MB</span>
+                  <span>Other formats are automatically converted to WAV.</span>
                   <input
                     aria-label="Voice recording"
                     disabled={busy}
@@ -782,6 +972,7 @@ export function Composer({ user }: { user: Row }) {
                       if (e.target.files?.[0]) {
                         setDraftId(null);
                         void upload(e.target.files[0]);
+                        e.target.value = "";
                       }
                     }}
                   />

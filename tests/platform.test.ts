@@ -1,3 +1,4 @@
+import { audioFixture } from "./helpers/audio";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -1709,29 +1710,21 @@ test("campaign responses distinguish an absent or stale worker from a recent hea
   }
 });
 
-test("all seven audio formats upload with validated signatures, correct MIME types, and ownership protection", async () => {
-  const formats: [string, Buffer, string][] = [
-    ["mp3", Buffer.from("ID3test"), "audio/mpeg"],
-    ["wav", Buffer.from("RIFF0000WAVEfmt "), "audio/wav"],
-    ["flac", Buffer.from("fLaCtest"), "audio/flac"],
-    [
-      "aac",
-      Buffer.from([0xff, 0xf1, 0x50, 0x80, 0x01, 0x7f, 0xfc]),
-      "audio/aac",
-    ],
-    [
-      "wma",
-      Buffer.from("3026b2758e66cf11a6d900aa0062ce6c0000", "hex"),
-      "audio/x-ms-wma",
-    ],
-    [
-      "m4a",
-      Buffer.from("00000018667479704d3441200000000069736f6d4d344120", "hex"),
-      "audio/mp4",
-    ],
-    ["ogg", Buffer.from("OggS\x00header\x01vorbis"), "audio/ogg"],
-  ];
-  for (const [ext, bytes, mime] of formats) {
+test("audio uploads preserve MP3/WAV and convert other recordings to private, playable WAV files", async () => {
+  for (const ext of [
+    "mp3",
+    "wav",
+    "flac",
+    "aac",
+    "wma",
+    "m4a",
+    "ogg",
+    "opus",
+    "webm",
+    "aiff",
+    "caf",
+  ]) {
+    const bytes = await audioFixture(ext);
     const form = new FormData();
     form.append(
       "file",
@@ -1740,13 +1733,44 @@ test("all seven audio formats upload with validated signatures, correct MIME typ
       }),
     );
     const uploaded = await req("/audio", "POST", form);
-    assert.equal(uploaded.res.status, 201, ext);
+    assert.equal(
+      uploaded.res.status,
+      201,
+      `${ext}: ${JSON.stringify(uploaded.data)}`,
+    );
+    const converted = !["mp3", "wav"].includes(ext);
+    assert.equal(uploaded.data.converted, converted);
+    assert.equal(
+      uploaded.data.filename,
+      `recording.${converted ? "wav" : ext}`,
+    );
     const response = await apiApp.request(
       "http://localhost:3100/api/audio/" + uploaded.data.id,
       { headers: { Cookie: `ndc_session=${member}` } },
     );
-    assert.equal(response.headers.get("content-type"), mime, ext);
-    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    assert.equal(
+      response.headers.get("content-type"),
+      ext === "mp3" ? "audio/mpeg" : "audio/wav",
+    );
+    const stored = Buffer.from(await response.arrayBuffer());
+    if (converted) {
+      assert.equal(stored.toString("ascii", 0, 4), "RIFF");
+      assert.equal(stored.toString("ascii", 8, 12), "WAVE");
+      assert.ok(stored.length > 44);
+      const fmt = stored.indexOf(Buffer.from("fmt "));
+      assert.equal(stored.readUInt16LE(fmt + 8), 1, "PCM format");
+      assert.equal(stored.readUInt16LE(fmt + 10), 1, "mono");
+      assert.equal(stored.readUInt32LE(fmt + 12), 16000, "16 kHz");
+    } else assert.deepEqual(stored, bytes);
+    assert.equal(
+      one("SELECT size FROM audio_files WHERE id=?", uploaded.data.id)!.size,
+      stored.length,
+    );
+    assert.equal(
+      (await req(`/audio/${uploaded.data.id}`, "GET", undefined, admin)).res
+        .status,
+      404,
+    );
     const bad = new FormData();
     bad.append("file", new File([Buffer.from("not audio")], `forged.${ext}`));
     assert.equal((await req("/audio", "POST", bad)).res.status, 400, ext);
@@ -1757,6 +1781,41 @@ test("all seven audio formats upload with validated signatures, correct MIME typ
     new File([Buffer.from("RIFF0000WAVEfmt ")], "renamed.mp3"),
   );
   assert.equal((await req("/audio", "POST", mismatch)).res.status, 400);
+});
+
+test("failed, oversized, and external-reference audio conversions do not create recordings", async () => {
+  const before = one("SELECT count(*) AS n FROM audio_files")!.n;
+  const oversized = new FormData();
+  oversized.append(
+    "file",
+    new File([new Uint8Array(await audioFixture("flac", 330))], "long.flac"),
+  );
+  const rejected = await req("/audio", "POST", oversized);
+  assert.equal(rejected.res.status, 400);
+  assert.match(rejected.data.error, /exceeds 10 MB/);
+  const playlist = new FormData();
+  playlist.append(
+    "file",
+    new File(
+      ["#EXTM3U\n#EXTINF:1,\nhttp://127.0.0.1:3100/api/health\n"],
+      "audio.m3u8",
+    ),
+  );
+  assert.equal((await req("/audio", "POST", playlist)).res.status, 400);
+  const previous = process.env.FFMPEG_PATH;
+  process.env.FFMPEG_PATH = resolve(directory, "missing-ffmpeg");
+  try {
+    const form = new FormData();
+    form.append(
+      "file",
+      new File([new Uint8Array(await audioFixture("flac"))], "voice.flac"),
+    );
+    assert.equal((await req("/audio", "POST", form)).res.status, 503);
+  } finally {
+    if (previous === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = previous;
+  }
+  assert.equal(one("SELECT count(*) AS n FROM audio_files")!.n, before);
 });
 
 async function paymentOrder(credits = 25, user = member) {
@@ -2090,7 +2149,7 @@ test("channel balances are isolated and unsent voice refunds return only voice c
     const recording = new FormData();
     recording.append(
       "file",
-      new File([Buffer.from("fLaCtest")], "funding.flac"),
+      new File([new Uint8Array(await audioFixture("flac"))], "funding.flac"),
     );
     const audioId = (await req("/audio", "POST", recording)).data.id;
     const voice = await campaign([list], {
@@ -2404,7 +2463,10 @@ test("voice retries charge voice only, cancellation refunds that attempt, and ad
   const list = newList();
   addContact(list, "+233245559760");
   const recording = new FormData();
-  recording.append("file", new File([Buffer.from("fLaCtest")], "retry.flac"));
+  recording.append(
+    "file",
+    new File([new Uint8Array(await audioFixture("flac"))], "retry.flac"),
+  );
   const audioId = (await req("/audio", "POST", recording)).data.id;
   const id = await campaign([list], { channel: "voice", audioId, message: "" });
   await req(`/campaigns/${id}/queue`, "POST");
@@ -3169,5 +3231,187 @@ test("admin password resets revoke sessions, clear stale recovery codes, and pre
       "%" + password + "%",
     )!.n,
     0,
+  );
+});
+
+test("draft and cancelled audiences can change without touching credits or prior deliveries", async () => {
+  const first = newList(),
+    replacement = newList(),
+    privateOther = newList(other),
+    pendingShared = newList(other, "shared", "pending");
+  addContact(first, "+233245551981");
+  addContact(replacement, "+233245551982");
+  const id = await campaign([first]);
+  const before = one(
+    "SELECT allowance FROM users WHERE id=?",
+    member,
+  )!.allowance;
+  const options = await req(`/campaigns/${id}/audience`);
+  assert.equal(options.res.status, 200);
+  assert.ok(options.data.lists.some((l: any) => l.id === replacement));
+  assert.ok(
+    !options.data.lists.some((l: any) =>
+      [privateOther, pendingShared].includes(l.id),
+    ),
+  );
+  assert.equal(
+    (await req(`/campaigns/${id}/audience`, "GET", undefined, other)).res
+      .status,
+    404,
+  );
+  assert.equal(
+    (
+      await req(
+        `/campaigns/${id}/audience`,
+        "PATCH",
+        { listIds: [replacement] },
+        other,
+      )
+    ).res.status,
+    404,
+  );
+  assert.equal(
+    (await req(`/campaigns/${id}/audience`, "PATCH", { listIds: [] })).res
+      .status,
+    400,
+  );
+  for (const list of [privateOther, pendingShared]) {
+    assert.equal(
+      (await req(`/campaigns/${id}/audience`, "PATCH", { listIds: [list] })).res
+        .status,
+      403,
+    );
+  }
+  assert.equal(
+    (
+      await req(`/campaigns/${id}/audience`, "PATCH", {
+        listIds: [replacement, replacement],
+      })
+    ).res.status,
+    200,
+  );
+  assert.deepEqual(
+    JSON.parse(one("SELECT list_ids FROM campaigns WHERE id=?", id)!.list_ids),
+    [replacement],
+  );
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before,
+  );
+  await req(`/campaigns/${id}/queue`, "POST");
+  assert.equal(
+    one("SELECT phone FROM deliveries WHERE campaign_id=?", id)!.phone,
+    "+233245551982",
+  );
+  for (const status of [
+    "queued",
+    "scheduled",
+    "sending",
+    "attention",
+    "completed",
+  ]) {
+    run("UPDATE campaigns SET status=? WHERE id=?", status, id);
+    assert.equal(
+      (await req(`/campaigns/${id}/audience`, "PATCH", { listIds: [first] }))
+        .res.status,
+      409,
+      status,
+    );
+  }
+  run("UPDATE campaigns SET status='queued' WHERE id=?", id);
+  await req(`/campaigns/${id}/cancel`, "POST");
+  const deliveries = all("SELECT * FROM deliveries WHERE campaign_id=?", id);
+  assert.equal(
+    (await req(`/campaigns/${id}/audience`, "PATCH", { listIds: [first] })).res
+      .status,
+    200,
+  );
+  assert.deepEqual(
+    all("SELECT * FROM deliveries WHERE campaign_id=?", id),
+    deliveries,
+  );
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before,
+  );
+  assert.equal(
+    (
+      await req(
+        `/campaigns/${id}/audience`,
+        "PATCH",
+        { listIds: [privateOther] },
+        admin,
+      )
+    ).res.status,
+    403,
+  );
+  assert.equal(
+    (
+      await req(
+        `/campaigns/${id}/audience`,
+        "PATCH",
+        { listIds: [replacement] },
+        admin,
+      )
+    ).res.status,
+    200,
+  );
+});
+
+test("cancelled campaigns resend through a fresh draft with the updated audience and original history intact", async () => {
+  const oldList = newList(),
+    nextList = newList();
+  addContact(oldList, "+233245551991");
+  addContact(oldList, "+233245551992");
+  addContact(nextList, "+233245551993");
+  const id = await campaign([oldList], { scheduledAt: Date.now() + 60000 });
+  await req(`/campaigns/${id}/queue`, "POST");
+  run(
+    "UPDATE deliveries SET status='unknown',provider_id='old-cancelled-batch' WHERE campaign_id=? AND phone=?",
+    id,
+    "+233245551991",
+  );
+  await req(`/campaigns/${id}/cancel`, "POST");
+  await req(`/campaigns/${id}/audience`, "PATCH", { listIds: [nextList] });
+  const oldDeliveries = all("SELECT * FROM deliveries WHERE campaign_id=?", id);
+  const before = one(
+    "SELECT allowance FROM users WHERE id=?",
+    member,
+  )!.allowance;
+  assert.equal(
+    (await req(`/campaigns/${id}/clone`, "POST", {}, other)).res.status,
+    404,
+  );
+  const copy = await req(`/campaigns/${id}/clone`, "POST");
+  assert.equal(copy.res.status, 201);
+  const draft = one("SELECT * FROM campaigns WHERE id=?", copy.data.id)!;
+  assert.equal(draft.status, "draft");
+  assert.equal(draft.source_campaign_id, id);
+  assert.equal(draft.scheduled_at, null);
+  assert.deepEqual(JSON.parse(draft.list_ids), [nextList]);
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before,
+  );
+  const queued = await Promise.all([
+    req(`/campaigns/${draft.id}/queue`, "POST"),
+    req(`/campaigns/${draft.id}/queue`, "POST"),
+  ]);
+  assert.deepEqual(queued.map((r) => r.res.status).sort(), [200, 409]);
+  assert.equal(
+    one("SELECT allowance FROM users WHERE id=?", member)!.allowance,
+    before - 1,
+  );
+  assert.equal(
+    one("SELECT phone FROM deliveries WHERE campaign_id=?", draft.id)!.phone,
+    "+233245551993",
+  );
+  assert.equal(
+    one("SELECT status FROM campaigns WHERE id=?", id)!.status,
+    "cancelled",
+  );
+  assert.deepEqual(
+    all("SELECT * FROM deliveries WHERE campaign_id=?", id),
+    oldDeliveries,
   );
 });

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { hash } from "bcryptjs";
 import { chromium } from "@playwright/test";
 import { logoUrl } from "../apps/web/src/lib/brand";
+import { audioFixture } from "../tests/helpers/audio";
 const temp = await mkdtemp(resolve(tmpdir(), "ndcms-production-"));
 process.env.DATABASE_PATH = resolve(temp, "test.sqlite");
 process.env.UPLOAD_DIR = resolve(temp, "uploads");
@@ -97,6 +98,31 @@ try {
   const cookie = login.headers.get("set-cookie")!;
   assert.match(cookie, /Secure/);
   assert.match(cookie, /HttpOnly/);
+  const recording = new FormData();
+  recording.append(
+    "file",
+    new File(
+      [new Uint8Array(await audioFixture("m4a"))],
+      "production-audio.m4a",
+    ),
+  );
+  const uploaded = await fetch(process.env.APP_URL + "/api/audio", {
+    method: "POST",
+    headers: { Origin: process.env.APP_URL, Cookie: cookie.split(";")[0] },
+    body: recording,
+  });
+  const upload = (await uploaded.json()) as any;
+  assert.equal(uploaded.status, 201, JSON.stringify(upload));
+  assert.equal(upload.filename, "production-audio.wav");
+  assert.equal(upload.converted, true);
+  const converted = await fetch(process.env.APP_URL + upload.url, {
+    headers: { Cookie: cookie.split(";")[0] },
+  });
+  assert.equal(converted.headers.get("content-type"), "audio/wav");
+  assert.equal(
+    Buffer.from(await converted.arrayBuffer()).toString("ascii", 8, 12),
+    "WAVE",
+  );
   const dashboard = await fetch(
     process.env.APP_URL + "/api/dashboard?admin=true",
     { headers: { Cookie: cookie.split(";")[0] } },
@@ -157,7 +183,7 @@ try {
     "Production browser must hydrate without errors",
   );
   console.log(
-    "Production checks passed: PNG bytes and rendering, browser login and persistent secure session, SSR, assets, SQLite, authorization, dashboard, and provider switching. No provider requests sent.",
+    "Production checks passed: WAV conversion, PNG bytes and rendering, browser login and persistent secure session, SSR, assets, SQLite, authorization, dashboard, and provider switching. No provider requests sent.",
   );
 } finally {
   await browser?.close();

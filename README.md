@@ -8,7 +8,7 @@ A full-stack communications workspace for bulk SMS and recorded voice campaigns 
 - Phone registration with provider-based OTP verification; password login and verified password reset; Google OpenID Connect sign-in.
 - Private contact lists, individual contact entry, CSV imports with normalization/deduplication and invalid-row reports, contact removal, and list deletion.
 - Shared lead library, consent confirmation, administrator approval/rejection, and automatic re-review after members add contacts to shared lists.
-- SMS composition with GSM-7/Unicode segmentation, voice recording upload/playback, audience selection, previews, review, draft saving, and scheduling. Voice uploads accept MP3, WAV, FLAC, AAC, WMA, M4A, and OGG (up to 10 MB), with file-signature checks. Browser playback depends on codec support; a download link is available.
+- SMS composition with GSM-7/Unicode segmentation, voice recording upload/playback, audience selection, previews, review, draft saving, and scheduling. Voice uploads preserve MP3/WAV and automatically convert other supported audio formats (including FLAC, AAC, WMA, M4A, OGG, Opus, WebM, and AIFF) to playable WAV. Uploads and converted output are limited to 10 MB.
 - Manual Mobile Money purchases of separate SMS and voice credits, editable receiving details and rates, in-app payment notifications, and administrator approval with duplicate-credit protection.
 - Durable queue with recipient snapshots, 100-recipient gateway batches, transactional SMS/voice credit reservations, atomic claims, cancellation, and recovery of interrupted work.
 - Recipient status reports and CSV export. Numbers available only through shared lists are masked for members in both reports and exports.
@@ -39,6 +39,12 @@ npm run worker
 ```
 
 The web server saves campaigns; the worker submits them. Both processes must use the same environment, database, and upload directory. Use the same OS service account for both. Root-owned IDE previews save new private recordings with the upload directory owner, so the workspace worker can read them without making files public. Unreadable recordings stop before submission and preserve pending recipients for a safe resume. The campaigns screen warns when queued work has no recent worker heartbeat. IDE previews that run as a different OS account have separate build caches, but the actual database must remain owned by your service account.
+
+### Automatic audio conversion
+
+`npm ci` installs the platform-specific FFmpeg executable through `ffmpeg-static`; the production build includes that package and executable in its server output. Install and build on the deployment OS/architecture, and permit dependency install scripts. An optional absolute `FFMPEG_PATH` overrides the bundled binary when your server manages FFmpeg separately.
+
+MP3 and WAV retain their original audio bytes. Other self-contained audio formats supported by the converter are decoded to mono, 16 kHz, 16-bit PCM WAV before storage. The filename, MIME type, preview, download, and provider upload all use the converted recording. Input and resulting WAV must each fit within 10 MB; oversized conversions are rejected, never silently truncated. Invalid files and unsupported codecs return a clear upload error. Conversion uses private temporary files, removes them on success or failure, permits only local media inputs, and limits runtime to 30 seconds and concurrency to two conversions per web process.
 
 ### First administrator
 
@@ -145,6 +151,10 @@ If a timeout or process crash makes submission uncertain, in-flight recipients b
 
 **Retry failed recipients** is an explicit action available for paused/finished campaigns with confirmed failed or rejected deliveries. It reserves fresh credits from that campaign's channel balance, archives previous attempts, and queues eligible failures plus any already-reserved unsent recipients. Delivered, accepted, unknown, and opted-out recipients are excluded from retries. Concurrent retry clicks cannot charge or queue the same attempt twice. Old provider references cannot update the new attempt. A retry retains its original provider.
 
+**Edit contact lists** in a draft or cancelled campaign lets you attach or remove lists and manage contacts in lists you own. Administrators can also manage the campaign owner’s lists. Only lists available to that owner can be attached. Saving an audience does not reserve credits or alter existing delivery results. Queued, scheduled, sending, and finished campaigns keep their recipient snapshots.
+
+**Resend campaign** on a cancelled campaign creates a new draft from its updated lists, clears the old schedule, and preserves the original report. Review the draft and confirm sending to the entire selected audience, including contacts reached by an earlier attempt. Sending reserves fresh credits and snapshots current eligible contacts; simply editing or creating the draft costs no credits.
+
 **Clone and resend** on a completed campaign creates a new draft with a postfix such as `Community broadcast - Copy 1`. The copy keeps the message/recording and selected lists, uses the currently selected gateway, and clears the old schedule and delivery results. Review the draft and confirm sending; it snapshots the lists' current eligible contacts and charges the matching balance. The original campaign and its report remain intact. Creating a draft alone does not charge credits.
 
 Cancelling a waiting campaign returns its unsent reservation. Opt-outs discovered at dispatch also return their unused units. A batch already submitted cannot be recalled. The opt-out register is managed by administrators; automatic parsing of inbound STOP replies is not included because an inbound-number integration is not configured.
@@ -194,7 +204,7 @@ npm run build
 npm run test:production
 ```
 
-Backend tests use a temporary SQLite database and mocked provider responses. Browser tests create a separate temporary database, start a mock worker, and cover member login, phone signup, CSV import, SMS and voice submission, shared lists, admin SMS/voice credit allocation, gateway status, Mobile Money submission and approval, editable rates, notifications, and mobile navigation. Backend tests also cover duplicate approvals, changed payment revisions, access controls, separate credit balances, refunds, charged retries, completed campaign copies, and all seven audio formats. They never contact real recipients or use the supplied API key. The browser configuration uses installed Google Chrome on macOS; set `CHROME_PATH` for another installation. Screenshots are written to ignored `test-results/`.
+Backend tests use a temporary SQLite database and mocked provider responses. Browser tests create a separate temporary database, start a mock worker, and cover member login, phone signup, CSV import, SMS and voice submission, shared lists, admin SMS/voice credit allocation, gateway status, Mobile Money submission and approval, editable rates, notifications, and mobile navigation. Backend tests also cover draft/cancelled audience changes, cancelled-campaign resend history and charges, real audio conversion and invalid/oversized inputs, duplicate approvals, changed payment revisions, access controls, separate credit balances, refunds, charged retries, completed campaign copies, and MP3/WAV preservation plus nine converted audio formats. They never contact real recipients or use the supplied API key. The browser configuration uses installed Google Chrome on macOS; set `CHROME_PATH` for another installation. Screenshots are written to ignored `test-results/`.
 
 For deliberate manual testing only, set `MOCK_PROVIDER=true` in a non-production environment; OTP is then `123456` and gateway results are explicitly mocked. Production rejects this setting. Keep test fixtures separate from your real database. Google’s live consent flow and actual SMS/voice delivery still require your configured provider accounts and an authorized recipient test.
 

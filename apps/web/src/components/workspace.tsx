@@ -27,7 +27,6 @@ import {
   Activity,
   Ban,
   ArrowRight,
-  CircleHelp,
   CornerDownLeft,
   Globe,
   ChevronDown,
@@ -363,17 +362,12 @@ export function Workspace({ page = "" }: { page?: string }) {
             </form>
             <span className="top-divider" />
             <NotificationBell />
-            <a
-              className="help-link top-icon"
-              href="/settings"
-              aria-label="Workspace help"
-            >
-              <CircleHelp size={20} />
-            </a>
+            <ContactUs icon />
             <a
               className="avatar small"
               href="/settings"
               aria-label="My profile"
+              title="My profile"
             >
               {user.name.slice(0, 2).toUpperCase()}
             </a>

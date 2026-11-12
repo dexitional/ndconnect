@@ -1917,11 +1917,12 @@ tbody tr:hover {
   padding: 55px 64px;
 }
 .auth-form > .eyebrow {
-  font-size: 12px;
+  font-size: 10px;
+  letter-spacing: 1.1px;
   line-height: 1.7;
 }
 .auth-form h1 {
-  font-size: 29px;
+  font-size: 26px;
   font-weight: 600;
   letter-spacing: -1.1px;
   margin: 17px 0 12px;
@@ -2676,7 +2677,8 @@ tbody tr:hover {
     font-size: 27px;
   }
   .auth-form h1 {
-    font-size: 27px;
+    font-size: 22px;
+    letter-spacing: -0.6px;
   }
   .auth-footer {
     font-size: 12px;
@@ -2688,7 +2690,8 @@ tbody tr:hover {
     display: none;
   }
   .auth-form > .eyebrow {
-    font-size: 12px;
+    font-size: 9px;
+    letter-spacing: 0.75px;
   }
   .dialog-content {
     padding: 21px;
@@ -2860,11 +2863,12 @@ tbody tr:hover {
   gap: 28px;
 }
 .auth-tagline {
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  line-height: 1.5;
+  font-family: "DM Serif Display", Georgia, serif;
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  line-height: 1.3;
+  text-wrap: balance;
   color: var(--dark);
   max-width: 560px;
 }
@@ -2933,8 +2937,8 @@ tbody tr:hover {
     gap: 8px;
   }
   .auth-tagline {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 19px;
+    font-weight: 400;
     letter-spacing: 0;
     max-width: 320px;
   }
@@ -2961,11 +2965,13 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 36px;
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 8px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  background: #fff;
   color: #486353;
   border-radius: 7px;
 }
@@ -2973,7 +2979,8 @@ tbody tr:hover {
 .search-submit:hover {
   background: #edf6f0;
 }
-.top-icon > svg {
+.topbar .top-icon > svg,
+.topbar .mobile-toggle > svg {
   display: block;
   width: 20px;
   height: 20px;
@@ -2989,8 +2996,8 @@ tbody tr:hover {
 }
 .notification-trigger .badge {
   position: absolute;
-  right: -5px;
-  top: -4px;
+  right: -4px;
+  top: -5px;
   min-width: 17px;
   pointer-events: none;
   font-size: 10px;
@@ -3011,5 +3018,46 @@ tbody tr:hover {
   }
   .breadcrumbs > .button {
     flex-shrink: 0;
+  }
+}
+
+.topbar .mobile-toggle {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 9px;
+}
+.top-actions > .avatar.small {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #dce8df;
+}
+.topbar .button:hover:not(:disabled) {
+  transform: none;
+}
+.campaign-audience {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f7faf8;
+}
+.campaign-audience > .muted {
+  margin: 8px 0 16px;
+}
+.campaign-audience .audience-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+@media (max-width: 400px) {
+  .topbar {
+    padding-inline: 12px;
+  }
+  .top-actions {
+    gap: 6px;
+  }
+  .breadcrumbs > svg {
+    display: none;
   }
 }

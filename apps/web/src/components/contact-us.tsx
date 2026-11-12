@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog, Field, Input, Textarea } from "@ndc/ui";
 import { toast } from "sonner";
 import { api, patch } from "../lib/api";
+import { CircleHelp } from "lucide-react";
 
 function useContactDetails() {
   return useQuery({
@@ -11,7 +12,7 @@ function useContactDetails() {
   });
 }
 
-export function ContactUs() {
+export function ContactUs({ icon = false }: { icon?: boolean }) {
   const [open, setOpen] = useState(false);
   const q = useContactDetails();
   const contact = q.data?.contact;
@@ -19,10 +20,13 @@ export function ContactUs() {
     <>
       <button
         type="button"
-        className="contact-us-link"
+        className={icon ? "top-icon help-link" : "contact-us-link"}
+        aria-label={icon ? "Workspace help" : undefined}
+        title={icon ? "Contact support" : undefined}
+        aria-haspopup="dialog"
         onClick={() => setOpen(true)}
       >
-        Contact us
+        {icon ? <CircleHelp size={20} /> : "Contact us"}
       </button>
       <Dialog
         open={open}

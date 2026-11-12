@@ -3,7 +3,7 @@ import { replayReceipts } from "./webhooks";
 import { senderRoutes, approvedSender, checkCampaignSender } from "./senders";
 import { billingRoutes } from "./billing";
 import { refundRecipients, reserveCredits } from "./credits";
-import { audioMime } from "./audio";
+import { prepareAudio } from "./audio";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
@@ -648,26 +648,13 @@ apiApp.delete("/lists/:list/contacts/:id", (c) => {
 apiApp.post("/audio", async (c) => {
   const form = await c.req.formData();
   const file = form.get("file");
-  if (
-    !(file instanceof File) ||
-    !file.size ||
-    file.size > 10 * 1024 * 1024 ||
-    !/\.(mp3|wav|flac|aac|wma|m4a|ogg)$/i.test(file.name)
-  )
-    fail(
-      400,
-      "Upload an MP3, WAV, FLAC, AAC, WMA, M4A, or OGG file up to 10 MB.",
-    );
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const mime = audioMime(file.name, bytes);
-  if (!mime)
-    fail(
-      400,
-      "The recording does not match a supported audio format. Export it as MP3, WAV, FLAC, AAC, WMA, M4A, or OGG.",
-    );
+  if (!(file instanceof File) || !file.size || file.size > 10 * 1024 * 1024)
+    fail(400, "Upload an audio recording up to 10 MB.");
+  const { bytes, mime, filename, converted } = await prepareAudio(
+    file.name,
+    Buffer.from(await file.arrayBuffer()),
+  );
   const audioId = id();
-  const filename =
-    file.name.replace(/[^\w. -]/g, "").slice(0, 100) || "recording.mp3";
   await writeFile(resolve(uploadDir, audioId), bytes, {
     mode: 0o600,
     flag: "wx",
@@ -691,7 +678,10 @@ apiApp.post("/audio", async (c) => {
     await unlink(resolve(uploadDir, audioId));
     throw error;
   }
-  return c.json({ id: audioId, filename, url: `/api/audio/${audioId}` }, 201);
+  return c.json(
+    { id: audioId, filename, converted, url: `/api/audio/${audioId}` },
+    201,
+  );
 });
 apiApp.get("/audio/:id", async (c) => {
   const a = one(
@@ -822,16 +812,50 @@ apiApp.get("/campaigns/:id", (c) => {
     ),
   });
 });
+apiApp.get("/campaigns/:id/audience", (c) => {
+  const user = c.get("user");
+  const campaign = ownedCampaign(c.req.param("id"), user);
+  return c.json({
+    listIds: JSON.parse(campaign.list_ids),
+    lists: all(
+      `${listQuery} WHERE u.status='active' AND (l.owner_id=? OR (l.visibility='shared' AND l.status='approved')) ORDER BY l.name`,
+      campaign.owner_id,
+    ).map((list) => ({
+      ...list,
+      canEdit: list.owner_id === user.id || user.role === "admin",
+    })),
+  });
+});
+apiApp.patch("/campaigns/:id/audience", async (c) => {
+  const { listIds } = campaignSchema
+    .pick({ listIds: true })
+    .parse(await c.req.json());
+  const user = c.get("user");
+  db.transaction(() => {
+    const campaign = ownedCampaign(c.req.param("id"), user);
+    if (!["draft", "cancelled"].includes(campaign.status))
+      fail(409, "Only draft or cancelled campaigns can change contact lists.");
+    accessibleLists(listIds, { ...user, id: campaign.owner_id });
+    run(
+      "UPDATE campaigns SET list_ids=? WHERE id=?",
+      JSON.stringify([...new Set(listIds)]),
+      campaign.id,
+    );
+    audit(
+      user.id,
+      "campaign.audience_updated",
+      campaign.id,
+      JSON.stringify([...new Set(listIds)]),
+    );
+  }).immediate();
+  return c.json({ success: true });
+});
 apiApp.post("/campaigns/:id/queue", (c) => {
   const u = c.get("user");
-  const campaign = ownedCampaign(c.req.param("id"), u);
-  assertProvider(campaign.provider);
   db.transaction(() => {
-    const current = one(
-      "SELECT status FROM campaigns WHERE id=?",
-      campaign.id,
-    )!;
-    if (current.status !== "draft")
+    const campaign = ownedCampaign(c.req.param("id"), u);
+    assertProvider(campaign.provider);
+    if (campaign.status !== "draft")
       fail(409, "This campaign has already been submitted.");
     checkCampaignSender(campaign);
     const ids: string[] = JSON.parse(campaign.list_ids);
@@ -964,10 +988,10 @@ apiApp.post("/campaigns/:id/clone", (c) => {
   const campaignId = id();
   db.transaction(() => {
     const original = ownedCampaign(c.req.param("id"), user);
-    if (original.status !== "completed")
+    if (!["completed", "cancelled"].includes(original.status))
       fail(
         409,
-        "Only completed campaigns can be copied for another broadcast.",
+        "Only completed or cancelled campaigns can be copied for another broadcast.",
       );
     accessibleLists(JSON.parse(original.list_ids), {
       ...user,
