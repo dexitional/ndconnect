@@ -27,6 +27,7 @@ import { api, post, patch, type Row } from "../lib/api";
 import { smsParts, number } from "../lib/shared";
 import { audioFormats } from "../lib/billing";
 import { Empty, Loading, QueryError, PageHeading, Status } from "./workspace";
+import { useGoTo } from "../lib/navigation";
 import { ContactManager, CreateContactList } from "./contacts";
 export function Campaigns({ admin = false }: { admin?: boolean }) {
   const client = useQueryClient();
@@ -247,7 +248,7 @@ function CampaignDetail({
       description="Track this campaign and review recipient results."
     >
       {q.isLoading ? (
-        <Loading />
+        <Loading variant="rows" />
       ) : q.isError ? (
         <QueryError error={q.error} retry={() => void q.refetch()} />
       ) : (
@@ -493,7 +494,7 @@ function CampaignAudience({
         refreshed at sending time.
       </p>
       {lists.isLoading ? (
-        <Loading />
+        <Loading variant="rows" />
       ) : lists.isError ? (
         <QueryError error={lists.error} retry={() => void lists.refetch()} />
       ) : (
@@ -591,6 +592,7 @@ function CampaignAudience({
   );
 }
 export function Composer({ user }: { user: Row }) {
+  const goTo = useGoTo();
   const [channel, setChannel] = useState("sms");
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
@@ -690,7 +692,7 @@ export function Composer({ user }: { user: Row }) {
       toast.success(
         send ? "Your campaign is queued." : "Campaign saved as a draft.",
       );
-      window.location.assign("/campaigns?id=" + current);
+      goTo("/campaigns?id=" + current);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -799,7 +801,7 @@ export function Composer({ user }: { user: Row }) {
                 retry={() => void lists.refetch()}
               />
             ) : lists.isLoading ? (
-              <Loading />
+              <Loading variant="rows" />
             ) : lists.data?.length ? (
               <div className="audience-list">
                 {lists.data.map((l) => (

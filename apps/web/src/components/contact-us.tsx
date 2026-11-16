@@ -35,7 +35,7 @@ export function ContactUs({ icon = false }: { icon?: boolean }) {
         description="Get in touch with the NDC Connect team."
       >
         {q.isLoading ? (
-          <p role="status">Loading contact details…</p>
+          <ContactSkeleton />
         ) : q.isError ? (
           <div role="alert">
             <p>Contact details could not be loaded.</p>
@@ -94,7 +94,7 @@ export function ContactSettings() {
         </div>
       </div>
       {q.isLoading ? (
-        <p>Loading contact details…</p>
+        <ContactSkeleton />
       ) : q.isError ? (
         <Button variant="outline" onClick={() => void q.refetch()}>
           Retry contact settings
@@ -150,5 +150,15 @@ export function ContactSettings() {
         </form>
       )}
     </section>
+  );
+}
+function ContactSkeleton() {
+  return (
+    <div role="status" className="space-y-2.5">
+      <span className="sr-only">Loading contact details…</span>
+      <span aria-hidden className="skeleton h-3.5 w-48" />
+      <span aria-hidden className="skeleton h-3.5 w-40" />
+      <span aria-hidden className="skeleton h-3.5 w-56" />
+    </div>
   );
 }

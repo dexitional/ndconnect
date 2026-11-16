@@ -3061,3 +3061,55 @@ tbody tr:hover {
     display: none;
   }
 }
+
+/* Loading placeholders: a soft light sweep across blocks shaped like the
+   content they stand in for (components/skeletons.tsx). */
+@keyframes skeleton-sweep {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  display: block;
+  border-radius: 6px;
+  background-color: #edf1ee;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.75),
+    transparent
+  );
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}
+
+/* The navigation progress bar slides across while a page is loading. */
+@keyframes nav-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+.nav-progress {
+  animation: nav-progress-slide 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress {
+    animation: none;
+    width: 100%;
+  }
+}

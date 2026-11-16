@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Toaster } from "sonner";
 import css from "../styles.css?url";
 import { logoUrl } from "../lib/brand";
+import { NavigationProgress } from "../components/skeletons";
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -60,6 +61,7 @@ function Root() {
       </head>
       <body>
         <QueryClientProvider client={client}>
+          <NavigationProgress />
           <Outlet />
           <Toaster richColors position="top-right" />
         </QueryClientProvider>

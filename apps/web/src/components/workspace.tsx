@@ -35,6 +35,9 @@ import {
 import { Button, Badge } from "@ndc/ui";
 import { api, post, type Row } from "../lib/api";
 import { number } from "../lib/shared";
+import { useGoTo, useInAppLinks, usePreloadWorkspace } from "../lib/navigation";
+import { useRouterState } from "@tanstack/react-router";
+import { PageSkeleton, RowsSkeleton, WorkspaceSkeleton } from "./skeletons";
 import { Contacts, LeadLibrary } from "./contacts";
 import { Campaigns, Composer } from "./campaigns";
 import { SenderIds, SmsNotifications } from "./senders";
@@ -99,13 +102,10 @@ export function Empty({
     </div>
   );
 }
-export function Loading() {
-  return (
-    <div className="loading" aria-label="Loading workspace">
-      <span className="loading-dot" />
-      <span>Getting your workspace ready…</span>
-    </div>
-  );
+// A page still loading its data: "page" for a whole page, "rows" for a list
+// inside a panel.
+export function Loading({ variant = "page" }: { variant?: "page" | "rows" }) {
+  return variant === "rows" ? <RowsSkeleton /> : <PageSkeleton />;
 }
 export function QueryError({
   error,
@@ -180,13 +180,24 @@ export function Workspace({ page = "" }: { page?: string }) {
   const me = useQuery({ queryKey: ["me"], queryFn: () => api("/auth/me") });
   const admin = page === "admin" || page.startsWith("admin/");
   const path = "/" + page;
+  const goTo = useGoTo();
+  const onLinkClick = useInAppLinks();
+  // Each address gets a fresh page, as it did when links reloaded the app,
+  // so pages that read ?id= or ?q= when they open pick up the new value.
+  const href = useRouterState({ select: (s) => s.location.href });
+  useEffect(() => {
+    setMobile(false);
+  }, [href]);
+  usePreloadWorkspace(
+    admin ? ["/", "/admin/campaigns"] : ["/admin", "/campaigns"],
+  );
   useEffect(() => {
     if (me.data && !me.data.user)
       window.location.replace(admin ? "/admin/login" : "/login");
   }, [me.data, admin]);
   if (me.isError)
     return <QueryError error={me.error} retry={() => void me.refetch()} />;
-  if (!me.data?.user) return <Loading />;
+  if (!me.data?.user) return <WorkspaceSkeleton />;
   const user = me.data.user;
   if (admin && user.role !== "admin")
     return (
@@ -225,7 +236,7 @@ export function Workspace({ page = "" }: { page?: string }) {
     "admin/payments",
   ];
   return (
-    <div className="app-shell">
+    <div className="app-shell" onClick={onLinkClick}>
       <aside
         className={`sidebar ${mobile ? "sidebar-open" : ""}`}
         aria-label={admin ? "Admin navigation" : "Workspace navigation"}
@@ -241,9 +252,7 @@ export function Workspace({ page = "" }: { page?: string }) {
         <button
           className="workspace-switch"
           onClick={() =>
-            window.location.assign(
-              user.role === "admin" ? (admin ? "/" : "/admin") : "/settings",
-            )
+            goTo(user.role === "admin" ? (admin ? "/" : "/admin") : "/settings")
           }
         >
           <span className="workspace-icon">
@@ -340,7 +349,7 @@ export function Workspace({ page = "" }: { page?: string }) {
               className="header-search"
               onSubmit={(e) => {
                 e.preventDefault();
-                window.location.assign(
+                goTo(
                   `${admin ? "/admin/campaigns" : "/campaigns"}?q=${encodeURIComponent(search)}`,
                 );
               }}
@@ -374,6 +383,7 @@ export function Workspace({ page = "" }: { page?: string }) {
           </div>
         </header>
         <motion.main
+          key={href}
           className="content"
           initial={{ opacity: 0, y: 7 }}
           animate={{ opacity: 1, y: 0 }}

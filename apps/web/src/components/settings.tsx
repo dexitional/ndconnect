@@ -654,7 +654,7 @@ export function Suppressions() {
       </PageHeading>
       <section className="panel">
         {q.isLoading ? (
-          <Loading />
+          <Loading variant="rows" />
         ) : q.isError ? (
           <QueryError error={q.error} retry={() => void q.refetch()} />
         ) : q.data.suppressions.length ? (

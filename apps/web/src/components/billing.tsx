@@ -7,6 +7,7 @@ import { api, post, patch, type Row } from "../lib/api";
 import { money } from "../lib/billing";
 import { number } from "../lib/shared";
 import { PageHeading, Loading, QueryError, Empty, Status } from "./workspace";
+import { useGoTo } from "../lib/navigation";
 
 const networks = ["MTN MoMo", "Telecel Cash", "AT Money"];
 const when = (value: string) =>
@@ -700,6 +701,7 @@ export function AdminPayments() {
 }
 
 export function NotificationBell() {
+  const goTo = useGoTo();
   const q = useQuery({
     queryKey: ["notifications"],
     queryFn: () => api("/notifications"),
@@ -729,7 +731,7 @@ export function NotificationBell() {
         description="Payment updates and account activity."
       >
         {q.isLoading ? (
-          <Loading />
+          <Loading variant="rows" />
         ) : q.isError ? (
           <QueryError error={q.error} retry={() => void q.refetch()} />
         ) : (
@@ -760,7 +762,8 @@ export function NotificationBell() {
                     e.preventDefault();
                     try {
                       await post(`/notifications/${n.id}/read`);
-                      window.location.assign(n.href);
+                      setOpen(false);
+                      goTo(n.href);
                     } catch (error) {
                       toast.error((error as Error).message);
                     }
